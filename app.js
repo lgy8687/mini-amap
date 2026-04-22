@@ -155,6 +155,7 @@
 
   // ===== 实时路况切换 =====
   function toggleTraffic() {
+    if (!state.map) return;
     if (state.trafficVisible) {
       state.map.remove(state.trafficLayer);
       state.trafficVisible = false;
