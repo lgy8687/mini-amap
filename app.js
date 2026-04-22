@@ -399,6 +399,9 @@
         const lat = parseFloat(btn.dataset.lat);
         const name = btn.dataset.name;
 
+        // 清除搜索标记，只保留路线
+        clearSearchMarkers();
+
         state.endLngLat = new AMap.LngLat(lng, lat);
         dom.routeEnd.value = name;
 
@@ -409,6 +412,7 @@
 
         closeSearchPanel();
 
+        // 直接规划路线并显示在地图上
         setTimeout(() => {
           quickPlanRoute();
         }, 100);
@@ -426,24 +430,59 @@
       return;
     }
 
-    clearRoutePolylines();
+    // 清除所有旧路线和标记
+    clearRoute();
 
-    const planner = new AMap.Driving({ 
+    // 使用驾车规划，直接在地图上显示单条路线
+    const planner = new AMap.Driving({
       map: state.map,
-      policy: AMap.DrivingPolicy.LEAST_TIME
+      policy: 0, // 最快路线策略
+      autoFitView: true,
     });
+
     planner.search(startPos, state.endLngLat, (status, result) => {
       if (status === 'complete' && result.routes && result.routes.length > 0) {
-        // 显示路线成功
+        // 只取第一条路线显示
+        const route = result.routes[0];
+        const distance = (route.distance / 1000).toFixed(1);
+        const time = Math.ceil(route.time / 60);
+
+        // 在起点显示信息窗口
+        showRouteInfo(startPos, `🚗 ${distance}公里 · 约${time}分钟`);
       }
     });
 
     state.routeResult = planner;
   }
 
+  // 显示路线信息
+  function showRouteInfo(lnglat, info) {
+    const infoWindow = new AMap.InfoWindow({
+      content: `<div style="padding:8px;font-size:14px;font-weight:500;">${info}</div>`,
+      offset: new AMap.Pixel(0, -36),
+      autoMove: false,
+    });
+    infoWindow.open(state.map, lnglat);
+
+    // 3秒后自动关闭
+    setTimeout(() => {
+      infoWindow.close();
+    }, 3000);
+  }
+
+  // 清除路线
+  function clearRoute() {
+    if (state.routeResult) {
+      state.routeResult.clear();
+      state.routeResult = null;
+    }
+  }
+
   function clearSearchMarkers() {
     state.searchMarkers.forEach((m) => m.setMap(null));
     state.searchMarkers = [];
+    // 同时清除旧路线，避免重叠
+    clearRoute();
   }
 
   // ===== 清除路线 =====
