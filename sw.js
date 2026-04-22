@@ -2,12 +2,12 @@
  * Service Worker - PWA 离线缓存
  */
 
-const CACHE_NAME = 'mini-amap-v1';
+const CACHE_NAME = 'mini-amap-v2';
 const PRECACHE_URLS = [
-  '/index.html',
-  '/style.css',
-  '/app.js',
-  '/manifest.json',
+  '/mini-amap/index.html',
+  '/mini-amap/style.css',
+  '/mini-amap/app.js',
+  '/mini-amap/manifest.json',
 ];
 
 // 安装：预缓存静态资源
