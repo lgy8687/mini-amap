@@ -576,6 +576,13 @@
       if (e.key === 'Enter') searchPlace(dom.searchInput.value);
     });
 
+    // 输入框焦点时全选
+    [dom.searchInput, dom.routeStart, dom.routeEnd].forEach((input) => {
+      input.addEventListener('focus', () => {
+        input.select();
+      });
+    });
+
     dom.closeSearch.addEventListener('click', closeSearchPanel);
 
     // 路线
