@@ -459,7 +459,7 @@ body {
   color: var(--primary);
 }
 
-/* ===== 路线选择卡片 ===== */
+/* ===== 路线选择卡片（横向滑动） ===== */
 .route-cards {
   position: fixed;
   left: 0;
@@ -469,7 +469,15 @@ body {
   display: flex;
   gap: 8px;
   padding: 0 12px;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
   transition: transform var(--transition), opacity var(--transition);
+}
+
+.route-cards::-webkit-scrollbar {
+  display: none;
 }
 
 .route-cards.hidden {
@@ -479,15 +487,16 @@ body {
 }
 
 .route-card {
-  flex: 1;
+  flex: 0 0 140px;
   background: var(--bg);
   border-radius: var(--radius);
-  padding: 12px 8px;
+  padding: 12px;
   box-shadow: var(--shadow);
   cursor: pointer;
   border: 2px solid transparent;
   transition: all var(--transition);
   text-align: center;
+  scroll-snap-align: start;
 }
 
 .route-card:active {
@@ -500,7 +509,7 @@ body {
 }
 
 .route-card-time {
-  font-size: 18px;
+  font-size: 20px;
   font-weight: 700;
   color: var(--text);
   margin-bottom: 4px;
@@ -510,13 +519,14 @@ body {
   font-size: 12px;
   color: var(--text-secondary);
   margin-bottom: 6px;
+  line-height: 1.4;
 }
 
 .route-card-tag {
   display: inline-block;
   font-size: 11px;
   padding: 2px 8px;
-  border-radius: 10px;
+  border-radius: 4px;
   background: var(--bg-secondary);
   color: var(--text-secondary);
 }

@@ -577,12 +577,13 @@
         step.path.forEach(p => path.push([p.lng, p.lat]));
       });
 
-      // 绘制路线
+      // 绘制路线 - 选中路线粗实线高亮，未选中路线细虚线淡化
       const polyline = new AMap.Polyline({
         path: path,
-        strokeColor: color,
-        strokeWeight: isSelected ? 8 : 5,
-        strokeOpacity: isSelected ? 1 : 0.6,
+        strokeColor: isSelected ? '#52c41a' : '#a8d8a0', // 选中深绿，未选中浅绿
+        strokeWeight: isSelected ? 10 : 4,
+        strokeOpacity: isSelected ? 1 : 0.4,
+        strokeStyle: isSelected ? 'solid' : 'dashed',
         lineJoin: 'round',
         lineCap: 'round',
         showDir: isSelected,
@@ -664,72 +665,66 @@
     
     state.selectedRouteIndex = index;
     
-    // 重新绘制地图上的路线
+    // 重新绘制地图上的路线（切换高亮）
     drawAllRoutesOnMap(state.allRouteData, state.startPos, state.endPos);
     
-    // 更新列表选中状态
-    dom.routeResults.querySelectorAll('.route-option').forEach((el, idx) => {
-      el.classList.toggle('selected', idx === index);
+    // 更新底部卡片选中状态
+    document.querySelectorAll('.route-card').forEach((card, idx) => {
+      card.classList.toggle('active', idx === index);
     });
     
-    // 更新详细步骤
-    const selected = state.allRouteData[index];
-    const stepsContainer = dom.routeResults.querySelector('.route-steps');
-    if (stepsContainer && selected) {
-      let stepsHtml = '';
-      selected.route.steps.forEach((step) => {
-        stepsHtml += `<div class="route-step">${step.instruction}</div>`;
-      });
-      stepsContainer.innerHTML = stepsHtml;
+    // 滚动到选中的卡片
+    const selectedCard = document.querySelectorAll('.route-card')[index];
+    if (selectedCard) {
+      selectedCard.scrollIntoView({ behavior: 'smooth', inline: 'center' });
     }
   }
 
   // ===== 渲染路线列表 =====
+  // 计算红绿灯数量
+  function countLights(route) {
+    if (!route.steps) return 0;
+    return route.steps.filter(s => s.assistant_action && s.assistant_action.includes('红绿灯')).length;
+  }
+
   function renderMultipleRoutesList(routeResults) {
-    let html = '<div class="route-options-list">';
+    // 使用底部卡片显示路线
+    const cards = document.querySelectorAll('.route-card');
     
     routeResults.forEach((r, idx) => {
       const route = r.route;
       const distance = (route.distance / 1000).toFixed(1);
       const time = Math.ceil(route.time / 60);
-      const hours = Math.floor(time / 60);
-      const mins = time % 60;
-      const timeStr = hours > 0 ? `${hours}小时${mins}分` : `${mins}分钟`;
-      const color = ROUTE_COLORS[idx] || '#999';
+      const lights = countLights(route);
       
-      const speed = route.distance / route.time;
-      let trafficStatus = '畅通';
-      let trafficColor = '#52c41a';
-      if (speed < 8) {
-        trafficStatus = '拥堵';
-        trafficColor = '#f5222d';
-      } else if (speed < 15) {
-        trafficStatus = '缓行';
-        trafficColor = '#faad14';
-      }
+      // 路线标签
+      const labels = ['大众常选', '更近·灯多', '备选三'];
+      const label = labels[idx] || '备选';
 
-      html += `
-        <div class="route-option ${idx === 0 ? 'selected' : ''}" data-index="${idx}">
-          <div class="route-color-bar" style="background: ${color}"></div>
-          <div class="route-option-content">
-            <div class="route-option-header">
-              <span class="route-policy">${r.policy.icon} ${r.policy.name}</span>
-              <span class="route-traffic" style="color: ${trafficColor}">${trafficStatus}</span>
-            </div>
-            <div class="route-option-meta">
-              <span>🛣 ${distance} 公里</span>
-              <span>⏱ 约 ${timeStr}</span>
-            </div>
-          </div>
-        </div>
-      `;
+      const card = cards[idx];
+      if (card) {
+        card.querySelector('.route-card-time').textContent = `${time}分钟`;
+        card.querySelector('.route-card-info').innerHTML = `${distance}公里 <span style="margin:0 4px">·</span> 🚦${lights}`;
+        card.querySelector('.route-card-tag').textContent = label;
+        
+        // 绑定点击事件
+        card.onclick = () => {
+          selectRoute(idx);
+          // 更新卡片选中状态
+          cards.forEach(c => c.classList.remove('active'));
+          card.classList.add('active');
+        };
+      }
     });
     
-    html += '</div>';
-    html += '<div class="route-steps-title">导航详情</div>';
-    html += '<div class="route-steps"></div>';
-
-    dom.routeResults.innerHTML = html;
+    // 默认选中第一条
+    if (cards[0]) cards[0].classList.add('active');
+    
+    // 显示卡片容器
+    dom.routeCards.classList.remove('hidden');
+    
+    // 原有的路线列表面板内容（保留但不显示）
+    dom.routeResults.innerHTML = '';
 
     // 绑定点击事件
     dom.routeResults.querySelectorAll('.route-option').forEach((el) => {
