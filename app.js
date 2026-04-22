@@ -8,7 +8,7 @@
 
   // ===== 注册 Service Worker =====
   if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('/sw.js').catch(() => {});
+    navigator.serviceWorker.register('/mini-amap/sw.js').catch(() => {});
   }
 
   // ===== 状态管理 =====
