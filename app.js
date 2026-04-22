@@ -224,12 +224,33 @@
   function searchPlace(keyword) {
     if (!keyword.trim()) return;
 
+    // 使用自动补全 + 搜索，支持短关键词
+    const autoComplete = new AMap.AutoComplete({
+      city: '全国',
+    });
+
+    autoComplete.search(keyword, (status, result) => {
+      if (status === 'complete' && result.tips && result.tips.length > 0) {
+        // 自动补全有结果，直接显示
+        const tips = result.tips.filter(tip => tip.location && tip.location.lng);
+        if (tips.length > 0) {
+          renderSearchTips(tips);
+          openSearchPanel();
+          return;
+        }
+      }
+
+      // 自动补全没结果，尝试完整搜索
+      doFullSearch(keyword);
+    });
+  }
+
+  function doFullSearch(keyword) {
     const placeSearch = new AMap.PlaceSearch({
       pageSize: 15,
       pageIndex: 1,
       city: '全国',
       citylimit: false,
-      autoFitView: false,
     });
 
     placeSearch.search(keyword, (status, result) => {
@@ -264,9 +285,96 @@
 
         openSearchPanel();
       } else {
-        dom.searchResults.innerHTML = '<div class="result-item"><div class="result-info"><div class="result-name">未找到相关地点</div></div></div>';
+        dom.searchResults.innerHTML = '<div class="result-item"><div class="result-info"><div class="result-name">未找到相关地点，请尝试更具体的关键词</div></div></div>';
         openSearchPanel();
       }
+    });
+  }
+
+  // 渲染自动补全结果
+  function renderSearchTips(tips) {
+    clearSearchMarkers();
+
+    dom.searchResults.innerHTML = tips
+      .map((tip, i) => `
+        <div class="result-item" data-index="${i}" data-lng="${tip.location.lng}" data-lat="${tip.location.lat}">
+          <div class="result-index">${i + 1}</div>
+          <div class="result-info">
+            <div class="result-name">${tip.name}</div>
+            <div class="result-addr">${tip.district || ''} ${tip.address || ''}</div>
+          </div>
+          <button class="btn-nav" data-lng="${tip.location.lng}" data-lat="${tip.location.lat}" data-name="${tip.name}">导航</button>
+        </div>
+      `)
+      .join('');
+
+    // 添加标记到地图
+    tips.forEach((tip, index) => {
+      if (tip.location && tip.location.lng) {
+        const marker = new AMap.Marker({
+          position: [tip.location.lng, tip.location.lat],
+          title: tip.name,
+          label: {
+            content: `${index + 1}`,
+            direction: 'top',
+          },
+        });
+
+        marker.on('click', () => {
+          showInfoWindow([tip.location.lng, tip.location.lat], tip.name, tip.district + ' ' + (tip.address || ''));
+        });
+
+        state.searchMarkers.push(marker);
+      }
+    });
+
+    state.map.add(state.searchMarkers);
+
+    if (state.searchMarkers.length > 0) {
+      state.map.setFitView(state.searchMarkers, false, [60, 60, 60, 120]);
+    }
+
+    bindResultEvents();
+  }
+
+  function bindResultEvents() {
+    // 点击结果项 - 定位到地图
+    dom.searchResults.querySelectorAll('.result-item').forEach((item) => {
+      item.addEventListener('click', (e) => {
+        if (e.target.classList.contains('btn-nav')) return;
+        const lng = parseFloat(item.dataset.lng);
+        const lat = parseFloat(item.dataset.lat);
+        const lnglat = new AMap.LngLat(lng, lat);
+        const name = item.querySelector('.result-name').textContent;
+        const addr = item.querySelector('.result-addr').textContent;
+
+        state.map.setZoomAndCenter(16, lnglat);
+        showInfoWindow(lnglat, name, addr);
+        closeSearchPanel();
+      });
+    });
+
+    // 点击导航按钮 - 直接规划路线
+    dom.searchResults.querySelectorAll('.btn-nav').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const lng = parseFloat(btn.dataset.lng);
+        const lat = parseFloat(btn.dataset.lat);
+        const name = btn.dataset.name;
+
+        state.endLngLat = new AMap.LngLat(lng, lat);
+        dom.routeEnd.value = name;
+
+        if (state.currentLocation) {
+          state.startLngLat = state.currentLocation;
+          dom.routeStart.value = '当前位置';
+        }
+
+        closeSearchPanel();
+
+        setTimeout(() => {
+          quickPlanRoute();
+        }, 100);
+      });
     });
   }
 
@@ -318,14 +426,39 @@
         }
 
         closeSearchPanel();
-        openRoutePanel();
 
-        // 自动开始规划
+        // 自动开始规划（不打开路线面板，直接在地图上显示）
         setTimeout(() => {
-          planRoute();
-        }, 300);
+          quickPlanRoute();
+        }, 100);
       });
     });
+  }
+
+  // 快速规划路线（不打开面板，直接在地图上显示）
+  function quickPlanRoute() {
+    if (!state.endLngLat) return;
+
+    const startPos = state.currentLocation || state.startLngLat;
+    if (!startPos) {
+      getCurrentLocation();
+      setTimeout(quickPlanRoute, 2000);
+      return;
+    }
+
+    // 清除旧路线
+    if (state.routeResult) {
+      state.routeResult.clear();
+    }
+
+    const planner = new AMap.Driving({ map: state.map });
+    planner.search(startPos, state.endLngLat, (status, result) => {
+      if (status === 'complete' && result.routes && result.routes.length > 0) {
+        // 显示路线成功，地图会自动调整视野
+      }
+    });
+
+    state.routeResult = planner;
   }
 
   function clearSearchMarkers() {
