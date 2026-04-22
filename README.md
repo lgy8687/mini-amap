@@ -40,3 +40,4 @@
 
 本项目仅供个人学习研究使用，基于高德开放平台 JS API 正常调用。请遵守[高德地图开放平台服务协议](https://lbs.amap.com/home/terms/)。
 # Force rebuild Wed Apr 22 04:04:42 PM UTC 2026
+# Trigger rebuild
