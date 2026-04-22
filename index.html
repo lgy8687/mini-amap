@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="极简地图">
+  <meta name="theme-color" content="#1677ff">
+  <title>极简地图</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- 顶部搜索栏（移动端常驻） -->
+  <div id="top-bar" class="top-bar">
+    <button id="menu-btn" class="btn-icon-bar" title="菜单">☰</button>
+    <div class="search-bar-wrapper">
+      <input type="text" id="search-input" placeholder="搜索地点、地址..." autocomplete="off">
+      <button id="search-btn" class="btn-search-go">搜索</button>
+    </div>
+  </div>
+
+  <!-- 搜索结果面板（从顶部滑下） -->
+  <div id="search-panel" class="search-panel hidden">
+    <div class="panel-header">
+      <span class="panel-title">搜索结果</span>
+      <button id="close-search" class="btn-close">✕</button>
+    </div>
+    <div id="search-results" class="result-list"></div>
+  </div>
+
+  <!-- 路线规划面板（从底部滑上） -->
+  <div id="route-panel" class="route-panel hidden">
+    <div class="route-drag-handle"></div>
+    <div class="route-header">
+      <span class="panel-title">路线规划</span>
+      <button id="close-route" class="btn-close">✕</button>
+    </div>
+    <div class="route-body">
+      <div class="route-field">
+        <span class="route-label start">起</span>
+        <input type="text" id="route-start" placeholder="起点（默认当前位置）" autocomplete="off">
+        <button class="btn-locate" id="locate-start" title="使用当前位置">📍</button>
+      </div>
+      <div class="route-field">
+        <span class="route-label end">终</span>
+        <input type="text" id="route-end" placeholder="终点" autocomplete="off">
+      </div>
+      <div class="route-options">
+        <label class="route-mode active" data-mode="driving">
+          <span>🚗</span><span>驾车</span>
+        </label>
+        <label class="route-mode" data-mode="transit">
+          <span>🚌</span><span>公交</span>
+        </label>
+        <label class="route-mode" data-mode="walking">
+          <span>🚶</span><span>步行</span>
+        </label>
+        <label class="route-mode" data-mode="riding">
+          <span>🚴</span><span>骑行</span>
+        </label>
+      </div>
+      <button id="route-btn" class="btn-primary btn-full">规划路线</button>
+      <div id="route-results" class="result-list route-result-list"></div>
+    </div>
+  </div>
+
+  <!-- 侧边菜单（桌面端）/ 抽屉菜单（移动端） -->
+  <div id="sidebar-overlay" class="sidebar-overlay hidden"></div>
+  <nav id="sidebar" class="sidebar">
+    <div class="sidebar-header">
+      <h1>极简地图</h1>
+      <button id="close-menu" class="btn-icon-bar">✕</button>
+    </div>
+    <ul class="menu-list">
+      <li><button id="menu-search" class="menu-item">🔍 地点搜索</button></li>
+      <li><button id="menu-route" class="menu-item">🛣 路线规划</button></li>
+      <li><button id="menu-locate" class="menu-item">📍 我的位置</button></li>
+      <li><button id="menu-key" class="menu-item">🔑 配置 Key</button></li>
+    </ul>
+    <div class="sidebar-footer">
+      <p>基于高德 JS API · 纯个人学习使用</p>
+    </div>
+  </nav>
+
+  <!-- 地图容器 -->
+  <div id="map-container"></div>
+
+  <!-- 右侧浮动按钮组 -->
+  <div class="float-btns">
+    <button id="locate-btn" class="btn-float" title="定位">📍</button>
+    <button id="route-float-btn" class="btn-float btn-float-primary" title="路线">🛣</button>
+  </div>
+
+  <!-- Key 输入弹窗 -->
+  <div id="key-modal" class="modal hidden">
+    <div class="modal-content">
+      <h2>配置高德地图 Key</h2>
+      <p>首次使用需要填入你在 <a href="https://lbs.amap.com/" target="_blank">高德开放平台</a> 申请的 JS API Key。</p>
+      <p class="hint">申请流程：注册账号 → 控制台 → 创建应用 → 添加 JS API Key（服务平台选"Web端(JS API)"）</p>
+      <div class="key-input-group">
+        <input type="text" id="key-input" placeholder="粘贴你的高德 JS API Key">
+      </div>
+      <div class="key-input-group">
+        <input type="text" id="security-input" placeholder="安全密钥（可选，2021年12月后申请的需填）">
+      </div>
+      <button id="save-key" class="btn-primary btn-full">保存并加载地图</button>
+      <p id="key-error" class="error-text"></p>
+    </div>
+  </div>
+
+  <!-- 信息弹窗模板 -->
+  <div id="info-window-template" style="display:none">
+    <div class="info-window">
+      <div class="info-title"></div>
+      <div class="info-addr"></div>
+      <div class="info-actions">
+        <button class="btn-small btn-to-start">设为起点</button>
+        <button class="btn-small btn-to-end">设为终点</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
