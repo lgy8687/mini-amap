@@ -269,19 +269,29 @@
       return;
     }
 
-    const geocoder = new AMap.Geocoder();
-    const center = state.map ? state.map.getCenter() : [116.397428, 39.90923];
+    // 如果地图未初始化，直接返回全国
+    if (!state.map) {
+      callback('全国');
+      return;
+    }
 
-    geocoder.getAddress(center, (status, result) => {
-      if (status === 'complete' && result.regeocode) {
-        const city = result.regeocode.addressComponent.city ||
-                    result.regeocode.addressComponent.province;
-        state.currentCity = city;
-        callback(city);
-      } else {
-        callback('全国');
-      }
-    });
+    try {
+      const geocoder = new AMap.Geocoder();
+      const center = state.map.getCenter();
+
+      geocoder.getAddress(center, (status, result) => {
+        if (status === 'complete' && result.regeocode) {
+          const city = result.regeocode.addressComponent.city ||
+                      result.regeocode.addressComponent.province;
+          state.currentCity = city;
+          callback(city);
+        } else {
+          callback('全国');
+        }
+      });
+    } catch (e) {
+      callback('全国');
+    }
   }
 
   // ===== 地点搜索 =====
