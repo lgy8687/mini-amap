@@ -135,13 +135,6 @@
       zooms: [3, 20],
     });
 
-    // 给地图容器添加 padding，让顶部搜索栏不遮挡
-    state.map.setPadding(
-      window.innerWidth < 769 ? 100 : 0,
-      window.innerWidth < 769 ? 0 : 290,
-      0, 0
-    );
-
     getCurrentLocation();
 
     state.map.on('click', (e) => {
