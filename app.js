@@ -317,29 +317,42 @@
   }
 
   function searchInCity(keyword, city, callback) {
-    const autoComplete = new AMap.AutoComplete({
-      city: city,
-    });
+    try {
+      const autoComplete = new AMap.AutoComplete({
+        city: city,
+      });
 
-    autoComplete.search(keyword, (status, result) => {
-      if (status === 'complete' && result.tips && result.tips.length > 0) {
-        const tips = result.tips.filter(tip => tip.location && tip.location.lng);
-        callback(tips);
-      } else {
-        callback([]);
-      }
-    });
+      autoComplete.search(keyword, (status, result) => {
+        if (status === 'complete' && result.tips && result.tips.length > 0) {
+          const tips = result.tips.filter(tip => tip.location && tip.location.lng);
+          callback(tips);
+        } else {
+          callback([]);
+        }
+      });
+    } catch (e) {
+      console.error('搜索错误:', e);
+      callback([]);
+    }
   }
 
   function renderAndShowResults(tips) {
     clearSearchMarkers();
 
+    if (!state.map) {
+      dom.searchResults.innerHTML = '<div class="result-item"><div class="result-info"><div class="result-name">地图未初始化，请先配置 Key</div></div></div>';
+      openSearchPanel();
+      return;
+    }
+
     if (state.currentLocation) {
-      tips.sort((a, b) => {
-        const distA = state.currentLocation.distance([a.location.lng, a.location.lat]);
-        const distB = state.currentLocation.distance([b.location.lng, b.location.lat]);
-        return distA - distB;
-      });
+      try {
+        tips.sort((a, b) => {
+          const distA = state.currentLocation.distance([a.location.lng, a.location.lat]);
+          const distB = state.currentLocation.distance([b.location.lng, b.location.lat]);
+          return distA - distB;
+        });
+      } catch (e) {}
     }
 
     const displayTips = tips.slice(0, 10);
@@ -376,9 +389,8 @@
       }
     });
 
-    state.map.add(state.searchMarkers);
-
     if (state.searchMarkers.length > 0) {
+      state.map.add(state.searchMarkers);
       state.map.setFitView(state.searchMarkers, false, [60, 60, 60, 120]);
     }
 
