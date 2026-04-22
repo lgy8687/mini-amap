@@ -21,10 +21,8 @@
     locationMarker: null,
     searchMarkers: [],
     routeResult: null,
-    routePolylines: [], // 多路线存储
-    routeMarkers: [], // 路线标签标记
-    allRouteData: [], // 存储所有路线数据
-    selectedRouteIndex: 0,
+    routeResults: [], // 存储多条路线结果
+    routeMarkers: [], // 路线起终点标记
     startLngLat: null,
     endLngLat: null,
     startPos: null,
@@ -49,6 +47,7 @@
     searchResults: $('#search-results'),
     closeSearch: $('#close-search'),
     routePanel: $('#route-panel'),
+    routeCards: $('#route-cards'),
     routeStart: $('#route-start'),
     routeEnd: $('#route-end'),
     locateStart: $('#locate-start'),
@@ -420,6 +419,7 @@
     });
   }
 
+  // 快速规划路线（显示三条不同策略的路线）
   function quickPlanRoute() {
     if (!state.endLngLat) return;
 
@@ -430,71 +430,178 @@
       return;
     }
 
-    // 清除所有旧路线和标记
-    clearRoute();
+    // 清除所有旧路线
+    clearAllRoutes();
 
-    // 使用驾车规划，直接在地图上显示单条路线
-    const planner = new AMap.Driving({
-      map: state.map,
-      policy: 0, // 最快路线策略
-      autoFitView: true,
+    // 三种策略：最快、最短、避堵
+    const policies = [
+      { policy: 0, name: '推荐', desc: '时间优先' },
+      { policy: 1, name: '最短', desc: '距离最短' },
+      { policy: 5, name: '避堵', desc: '躲避拥堵' },
+    ];
+
+    state.routeResults = [];
+    let completed = 0;
+
+    policies.forEach((config, index) => {
+      const planner = new AMap.Driving({
+        map: state.map,
+        policy: config.policy,
+        autoFitView: index === 0,
+        hideMarkers: true,
+        showTraffic: true,
+      });
+
+      planner.search(startPos, state.endLngLat, (status, result) => {
+        completed++;
+        if (status === 'complete' && result.routes && result.routes.length > 0) {
+          const route = result.routes[0];
+          state.routeResults[index] = {
+            planner: planner,
+            route: route,
+            config: config,
+            distance: (route.distance / 1000).toFixed(1),
+            time: Math.ceil(route.time / 60),
+            lights: countTrafficLights(route),
+          };
+        }
+
+        if (completed === 3) {
+          showRouteCards(startPos, state.endLngLat);
+        }
+      });
+    });
+  }
+
+  // 计算红绿灯数量
+  function countTrafficLights(route) {
+    if (!route.steps) return 0;
+    return route.steps.filter(s => 
+      s.assistant_action && 
+      (s.assistant_action.includes('红绿灯') || s.assistant_action.includes('信号灯'))
+    ).length;
+  }
+
+  // 显示路线选择卡片
+  function showRouteCards(start, end) {
+    const cards = document.querySelectorAll('.route-card');
+    const validResults = state.routeResults.filter(r => r);
+
+    if (validResults.length === 0 || !dom.routeCards) {
+      if (dom.routeCards) dom.routeCards.classList.add('hidden');
+      return;
+    }
+
+    // 清除旧事件监听
+    cards.forEach(card => {
+      const newCard = card.cloneNode(true);
+      card.parentNode.replaceChild(newCard, card);
     });
 
-    planner.search(startPos, state.endLngLat, (status, result) => {
-      if (status === 'complete' && result.routes && result.routes.length > 0) {
-        // 只取第一条路线显示
-        const route = result.routes[0];
-        const distance = (route.distance / 1000).toFixed(1);
-        const time = Math.ceil(route.time / 60);
+    const newCards = document.querySelectorAll('.route-card');
 
-        // 在起点显示信息窗口
-        showRouteInfo(startPos, `🚗 ${distance}公里 · 约${time}分钟`);
+    validResults.forEach((result, index) => {
+      const card = newCards[index];
+      if (card) {
+        card.querySelector('.route-card-time').textContent = `${result.time}分钟`;
+        card.querySelector('.route-card-info').textContent = `${result.distance}公里 · ${result.lights}个红绿灯`;
+        card.querySelector('.route-card-tag').textContent = result.config.name;
+
+        card.addEventListener('click', () => {
+          newCards.forEach(c => c.classList.remove('active'));
+          card.classList.add('active');
+
+          // 高亮选中的路线
+          highlightRoute(index);
+        });
       }
     });
 
-    state.routeResult = planner;
+    // 默认选中第一条
+    if (newCards[0]) newCards[0].classList.add('active');
+
+    dom.routeCards.classList.remove('hidden');
+
+    // 添加起点终点标记
+    addRouteMarkers(start, end);
   }
 
-  // 显示路线信息
-  function showRouteInfo(lnglat, info) {
-    const infoWindow = new AMap.InfoWindow({
-      content: `<div style="padding:8px;font-size:14px;font-weight:500;">${info}</div>`,
-      offset: new AMap.Pixel(0, -36),
-      autoMove: false,
+  // 高亮选中的路线
+  function highlightRoute(selectedIndex) {
+    state.routeResults.forEach((r, i) => {
+      if (!r || !r.planner) return;
+      // 通过重新设置地图来切换显示
+      if (i === selectedIndex) {
+        r.planner.show();
+      } else {
+        r.planner.hide();
+      }
     });
-    infoWindow.open(state.map, lnglat);
-
-    // 3秒后自动关闭
-    setTimeout(() => {
-      infoWindow.close();
-    }, 3000);
   }
 
-  // 清除路线
-  function clearRoute() {
-    if (state.routeResult) {
-      state.routeResult.clear();
-      state.routeResult = null;
+  // 添加路线起点终点标记
+  function addRouteMarkers(start, end) {
+    if (state.routeMarkers) {
+      state.routeMarkers.forEach(m => m.setMap(null));
     }
+    state.routeMarkers = [];
+
+    const startMarker = new AMap.Marker({
+      position: start,
+      icon: new AMap.Icon({
+        size: new AMap.Size(24, 34),
+        image: '//webapi.amap.com/theme/v1.3/markers/n/start.png',
+        imageSize: new AMap.Size(24, 34),
+      }),
+      offset: new AMap.Pixel(-12, -34),
+    });
+
+    const endMarker = new AMap.Marker({
+      position: end,
+      icon: new AMap.Icon({
+        size: new AMap.Size(24, 34),
+        image: '//webapi.amap.com/theme/v1.3/markers/n/end.png',
+        imageSize: new AMap.Size(24, 34),
+      }),
+      offset: new AMap.Pixel(-12, -34),
+    });
+
+    state.routeMarkers = [startMarker, endMarker];
+    state.map.add(state.routeMarkers);
+  }
+
+  // 清除所有路线和标记
+  function clearAllRoutes() {
+    if (dom.routeCards) dom.routeCards.classList.add('hidden');
+    document.querySelectorAll('.route-card').forEach(c => c.classList.remove('active'));
+
+    if (state.routeResults) {
+      state.routeResults.forEach(r => {
+        if (r && r.planner) r.planner.clear();
+      });
+    }
+    state.routeResults = [];
+
+    if (state.routeMarkers) {
+      state.routeMarkers.forEach(m => m.setMap(null));
+      state.routeMarkers = [];
+    }
+  }
+
+  // 清除路线（兼容旧代码）
+  function clearRoute() {
+    clearAllRoutes();
+  }
+
+  // 显示路线信息（兼容旧代码）
+  function showRouteInfo(lnglat, info) {
+    // 不再使用弹窗，信息直接显示在卡片上
   }
 
   function clearSearchMarkers() {
     state.searchMarkers.forEach((m) => m.setMap(null));
     state.searchMarkers = [];
-    // 同时清除旧路线，避免重叠
-    clearRoute();
-  }
-
-  // ===== 清除路线 =====
-  function clearRoutePolylines() {
-    state.routePolylines.forEach((line) => line.setMap(null));
-    state.routePolylines = [];
-    state.routeMarkers.forEach((m) => m.setMap(null));
-    state.routeMarkers = [];
-    state.allRouteData = [];
-    if (state.routeResult) {
-      state.routeResult.clear();
-    }
+    clearAllRoutes();
   }
 
   // ===== 路线规划（支持多路线） =====

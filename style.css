@@ -459,6 +459,73 @@ body {
   color: var(--primary);
 }
 
+/* ===== 路线选择卡片 ===== */
+.route-cards {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: calc(12px + var(--safe-bottom));
+  z-index: 90;
+  display: flex;
+  gap: 8px;
+  padding: 0 12px;
+  transition: transform var(--transition), opacity var(--transition);
+}
+
+.route-cards.hidden {
+  transform: translateY(120%);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.route-card {
+  flex: 1;
+  background: var(--bg);
+  border-radius: var(--radius);
+  padding: 12px 8px;
+  box-shadow: var(--shadow);
+  cursor: pointer;
+  border: 2px solid transparent;
+  transition: all var(--transition);
+  text-align: center;
+}
+
+.route-card:active {
+  transform: scale(0.96);
+}
+
+.route-card.active {
+  border-color: var(--primary);
+  background: var(--primary-light);
+}
+
+.route-card-time {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+
+.route-card-info {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+}
+
+.route-card-tag {
+  display: inline-block;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+}
+
+.route-card.active .route-card-tag {
+  background: var(--primary);
+  color: white;
+}
+
 .menu-list {
   list-style: none;
   padding: 8px 0;
