@@ -309,11 +309,29 @@ body {
   border-bottom: 1px solid var(--border);
   cursor: pointer;
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 12px;
   transition: background var(--transition);
   -webkit-user-select: none;
   user-select: none;
+}
+
+.btn-nav {
+  background: var(--primary);
+  color: white;
+  border: none;
+  padding: 6px 14px;
+  border-radius: 16px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--transition);
+  flex-shrink: 0;
+}
+
+.btn-nav:active {
+  background: var(--primary-hover);
 }
 
 .result-item:active {
