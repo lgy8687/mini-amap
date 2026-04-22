@@ -17,6 +17,7 @@
     key: localStorage.getItem('amap_key') || '',
     securityCode: localStorage.getItem('amap_security') || '',
     currentLocation: null,
+    currentCity: null,
     locationMarker: null,
     searchMarkers: [],
     routeResult: null,
@@ -220,82 +221,85 @@
     }, 150);
   }
 
+  // 获取当前城市
+  function getCurrentCity(callback) {
+    if (state.currentCity) {
+      callback(state.currentCity);
+      return;
+    }
+
+    const geocoder = new AMap.Geocoder();
+    const center = state.map ? state.map.getCenter() : [116.397428, 39.90923];
+
+    geocoder.getAddress(center, (status, result) => {
+      if (status === 'complete' && result.regeocode) {
+        const city = result.regeocode.addressComponent.city ||
+                    result.regeocode.addressComponent.province;
+        state.currentCity = city;
+        callback(city);
+      } else {
+        callback('全国');
+      }
+    });
+  }
+
   // ===== 地点搜索 =====
   function searchPlace(keyword) {
     if (!keyword.trim()) return;
 
-    // 使用自动补全 + 搜索，支持短关键词
+    // 先获取当前城市，然后优先搜索本地
+    getCurrentCity((city) => {
+      // 第一步：在当前城市搜索
+      searchInCity(keyword, city, (localResults) => {
+        if (localResults && localResults.length > 0) {
+          // 本地有结果，直接显示
+          renderAndShowResults(localResults);
+        } else {
+          // 本地没结果，全国搜索
+          searchInCity(keyword, '全国', (nationalResults) => {
+            if (nationalResults && nationalResults.length > 0) {
+              renderAndShowResults(nationalResults);
+            } else {
+              dom.searchResults.innerHTML = '<div class="result-item"><div class="result-info"><div class="result-name">未找到相关地点</div></div></div>';
+              openSearchPanel();
+            }
+          });
+        }
+      });
+    });
+  }
+
+  function searchInCity(keyword, city, callback) {
     const autoComplete = new AMap.AutoComplete({
-      city: '全国',
+      city: city,
     });
 
     autoComplete.search(keyword, (status, result) => {
       if (status === 'complete' && result.tips && result.tips.length > 0) {
-        // 自动补全有结果，直接显示
         const tips = result.tips.filter(tip => tip.location && tip.location.lng);
-        if (tips.length > 0) {
-          renderSearchTips(tips);
-          openSearchPanel();
-          return;
-        }
-      }
-
-      // 自动补全没结果，尝试完整搜索
-      doFullSearch(keyword);
-    });
-  }
-
-  function doFullSearch(keyword) {
-    const placeSearch = new AMap.PlaceSearch({
-      pageSize: 15,
-      pageIndex: 1,
-      city: '全国',
-      citylimit: false,
-    });
-
-    placeSearch.search(keyword, (status, result) => {
-      clearSearchMarkers();
-
-      if (status === 'complete' && result.poiList) {
-        const pois = result.poiList.pois;
-        renderSearchResults(pois);
-
-        pois.forEach((poi, index) => {
-          const marker = new AMap.Marker({
-            position: poi.location,
-            title: poi.name,
-            label: {
-              content: `${index + 1}`,
-              direction: 'top',
-            },
-          });
-
-          marker.on('click', () => {
-            showInfoWindow(poi.location, poi.name, poi.address);
-          });
-
-          state.searchMarkers.push(marker);
-        });
-
-        state.map.add(state.searchMarkers);
-
-        if (pois.length > 0) {
-          state.map.setFitView(state.searchMarkers, false, [60, 60, 60, 120]);
-        }
-
-        openSearchPanel();
+        callback(tips);
       } else {
-        dom.searchResults.innerHTML = '<div class="result-item"><div class="result-info"><div class="result-name">未找到相关地点，请尝试更具体的关键词</div></div></div>';
-        openSearchPanel();
+        callback([]);
       }
     });
   }
 
-  // 渲染自动补全结果
-  function renderSearchTips(tips) {
+  function renderAndShowResults(tips) {
     clearSearchMarkers();
 
-    dom.searchResults.innerHTML = tips
+    // 按距离排序（如果有当前位置）
+    if (state.currentLocation) {
+      tips.sort((a, b) => {
+        const distA = state.currentLocation.distance([a.location.lng, a.location.lat]);
+        const distB = state.currentLocation.distance([b.location.lng, b.location.lat]);
+        return distA - distB;
+      });
+    }
+
+    // 限制显示数量
+    const displayTips = tips.slice(0, 10);
+
+    dom.searchResults.innerHTML = displayTips
       .map((tip, i) => `
         <div class="result-item" data-index="${i}" data-lng="${tip.location.lng}" data-lat="${tip.location.lat}">
           <div class="result-index">${i + 1}</div>
@@ -309,7 +313,7 @@
       .join('');
 
     // 添加标记到地图
-    tips.forEach((tip, index) => {
+    displayTips.forEach((tip, index) => {
       if (tip.location && tip.location.lng) {
         const marker = new AMap.Marker({
           position: [tip.location.lng, tip.location.lat],
@@ -335,6 +339,7 @@
     }
 
     bindResultEvents();
+    openSearchPanel();
   }
 
   function bindResultEvents() {
@@ -371,63 +376,6 @@
 
         closeSearchPanel();
 
-        setTimeout(() => {
-          quickPlanRoute();
-        }, 100);
-      });
-    });
-  }
-
-  function renderSearchResults(pois) {
-    dom.searchResults.innerHTML = pois
-      .map((poi, i) => `
-        <div class="result-item" data-index="${i}" data-lng="${poi.location.lng}" data-lat="${poi.location.lat}">
-          <div class="result-index">${i + 1}</div>
-          <div class="result-info">
-            <div class="result-name">${poi.name}</div>
-            <div class="result-addr">${poi.address || '暂无地址信息'}</div>
-          </div>
-          <button class="btn-nav" data-lng="${poi.location.lng}" data-lat="${poi.location.lat}" data-name="${poi.name}">导航</button>
-        </div>
-      `)
-      .join('');
-
-    // 点击结果项 - 定位到地图
-    dom.searchResults.querySelectorAll('.result-item').forEach((item) => {
-      item.addEventListener('click', (e) => {
-        if (e.target.classList.contains('btn-nav')) return;
-        const lng = parseFloat(item.dataset.lng);
-        const lat = parseFloat(item.dataset.lat);
-        const lnglat = new AMap.LngLat(lng, lat);
-        const name = item.querySelector('.result-name').textContent;
-        const addr = item.querySelector('.result-addr').textContent;
-
-        state.map.setZoomAndCenter(16, lnglat);
-        showInfoWindow(lnglat, name, addr);
-        closeSearchPanel();
-      });
-    });
-
-    // 点击导航按钮 - 直接规划路线
-    dom.searchResults.querySelectorAll('.btn-nav').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const lng = parseFloat(btn.dataset.lng);
-        const lat = parseFloat(btn.dataset.lat);
-        const name = btn.dataset.name;
-
-        // 设置终点
-        state.endLngLat = new AMap.LngLat(lng, lat);
-        dom.routeEnd.value = name;
-
-        // 设置起点为当前位置
-        if (state.currentLocation) {
-          state.startLngLat = state.currentLocation;
-          dom.routeStart.value = '当前位置';
-        }
-
-        closeSearchPanel();
-
-        // 自动开始规划（不打开路线面板，直接在地图上显示）
         setTimeout(() => {
           quickPlanRoute();
         }, 100);
