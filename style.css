@@ -90,6 +90,8 @@ body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
 .float-btns { position: fixed; right: 16px; bottom: calc(24px + var(--safe-bottom)); z-index: 50; display: flex; flex-direction: column; gap: 10px; }
 .btn-float { width: 48px; height: 48px; border-radius: 50%; border: none; background: var(--bg); box-shadow: 0 2px 12px rgba(0,0,0,0.1); font-size: 22px; cursor: pointer; display: flex; align-items: center; justify-content: center; }
 .btn-float:active { transform: scale(0.92); }
+.btn-float.active { background: var(--primary); color: white; }
+.btn-float.active:active { background: var(--primary-hover); }
 
 /* 路线选择卡片 - 高德风格配色 */
 .route-cards {

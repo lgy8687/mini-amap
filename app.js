@@ -21,6 +21,8 @@
   var allRouteData = [];
   var selectedRouteIndex = 0;
   var autocompleteTimer = null;  // 输入提示防抖定时器
+  var trafficLayer = null;        // 实时路况图层
+  var trafficVisible = true;      // 路况默认开启
 
   // ===== DOM =====
   var searchInput = document.getElementById('search-input');
@@ -30,6 +32,7 @@
   var panelTitle = document.getElementById('panel-title');
   var closeSearch = document.getElementById('close-search');
   var locateBtn = document.getElementById('locate-btn');
+  var trafficBtn = document.getElementById('traffic-btn');
   var keyModal = document.getElementById('key-modal');
   var keyInput = document.getElementById('key-input');
   var securityInput = document.getElementById('security-input');
@@ -111,6 +114,15 @@
       center: [116.397428, 39.90923],
       resizeEnable: true,
     });
+    // 默认开启实时路况图层
+    trafficLayer = new AMap.TileLayer.Traffic({
+      zIndex: 10,
+      autoRefresh: true,
+      interval: 180,  // 3分钟自动刷新路况数据
+    });
+    trafficLayer.setMap(map);
+    trafficVisible = true;
+
     doLocate();
     map.on('click', function (e) {
       reverseGeocode(e.lnglat);
@@ -619,6 +631,20 @@
 
   locateBtn.addEventListener('click', function () {
     doLocate();
+  });
+
+  // 路况开关
+  trafficBtn.addEventListener('click', function () {
+    if (!trafficLayer) return;
+    if (trafficVisible) {
+      trafficLayer.hide();
+      trafficVisible = false;
+      trafficBtn.classList.remove('active');
+    } else {
+      trafficLayer.show();
+      trafficVisible = true;
+      trafficBtn.classList.add('active');
+    }
   });
 
   // Key 保存
