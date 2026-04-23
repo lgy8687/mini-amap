@@ -14,18 +14,20 @@
   var key = localStorage.getItem('amap_key') || '';
   var securityCode = localStorage.getItem('amap_security') || '';
   var currentLocation = null;
-  var currentCity = '';  // 定位所在城市
+  var currentCity = '';
   var searchMarkers = [];
   var routePolylines = [];
   var routeLabels = [];
   var allRouteData = [];
   var selectedRouteIndex = 0;
+  var autocompleteTimer = null;  // 输入提示防抖定时器
 
   // ===== DOM =====
   var searchInput = document.getElementById('search-input');
   var searchBtn = document.getElementById('search-btn');
   var searchPanel = document.getElementById('search-panel');
   var searchResults = document.getElementById('search-results');
+  var panelTitle = document.getElementById('panel-title');
   var closeSearch = document.getElementById('close-search');
   var locateBtn = document.getElementById('locate-btn');
   var keyModal = document.getElementById('key-modal');
@@ -46,6 +48,33 @@
       .replace(/'/g, '&#39;');
   }
 
+  // ===== 搜索历史 =====
+  var HISTORY_KEY = 'mini-amap-history';
+  var MAX_HISTORY = 5;
+
+  function getSearchHistory() {
+    try {
+      return JSON.parse(localStorage.getItem(HISTORY_KEY)) || [];
+    } catch (e) { return []; }
+  }
+
+  function addSearchHistory(keyword) {
+    if (!keyword || !keyword.trim()) return;
+    var list = getSearchHistory();
+    // 去重：如果已存在则移到最前
+    var idx = list.indexOf(keyword);
+    if (idx >= 0) list.splice(idx, 1);
+    list.unshift(keyword);
+    // 超过5条删除最旧的
+    if (list.length > MAX_HISTORY) list = list.slice(0, MAX_HISTORY);
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(list));
+  }
+
+  function clearSearchHistory() {
+    localStorage.removeItem(HISTORY_KEY);
+    showHistoryPanel();
+  }
+
   // ===== 加载地图 =====
   function loadMap() {
     if (window.AMap) {
@@ -60,9 +89,8 @@
       window._AMapSecurityConfig = { securityJsCode: securityCode };
     }
     var s = document.createElement('script');
-    s.src = 'https://webapi.amap.com/maps?v=2.0&key=' + key + '&plugin=AMap.Geolocation,AMap.PlaceSearch,AMap.Geocoder,AMap.Driving';
+    s.src = 'https://webapi.amap.com/maps?v=2.0&key=' + key + '&plugin=AMap.Geolocation,AMap.PlaceSearch,AMap.AutoComplete,AMap.Geocoder,AMap.Driving';
     s.onload = function () {
-      // 高德 JS API 加载成功不等于 Key 有效，需要检查 AMap 是否真正可用
       if (window.AMap && window.AMap.Map) {
         initMap();
       } else {
@@ -97,7 +125,6 @@
       if (status === 'complete') {
         currentLocation = result.position;
         map.setCenter(result.position);
-        // 通过逆地理编码获取城市信息，比 Geolocation 的 addressComponent 更可靠
         updateCurrentCity(result.position);
       }
     });
@@ -109,7 +136,6 @@
     geocoder.getAddress(lnglat, function (status, result) {
       if (status === 'complete' && result.regeocode && result.regeocode.addressComponent) {
         var comp = result.regeocode.addressComponent;
-        // 直辖市 city 为空，用 province 代替
         if (comp.city && comp.city.length > 0) {
           currentCity = comp.city;
         } else if (comp.province && comp.province.length > 0) {
@@ -142,7 +168,7 @@
     infoWindow.open(map, lnglat);
   }
 
-  // 导航到这里（全局函数，给信息窗口按钮用）
+  // 导航到这里
   window._navFrom = function (btn) {
     var lng = parseFloat(btn.getAttribute('data-lng'));
     var lat = parseFloat(btn.getAttribute('data-lat'));
@@ -150,6 +176,91 @@
     var endLngLat = new AMap.LngLat(lng, lat);
     planRoutes(endLngLat, name);
   };
+
+  // ===== 历史记录面板 =====
+  function showHistoryPanel() {
+    var list = getSearchHistory();
+    if (list.length === 0) {
+      searchResults.innerHTML = '<div class="history-empty">暂无搜索记录</div>';
+    } else {
+      var html = '<div class="history-header"><span>搜索历史</span><button class="history-clear" id="clear-history-btn">清空</button></div>';
+      list.forEach(function (kw) {
+        html += '<div class="history-item" data-keyword="' + escapeHtml(kw) + '">' +
+          '<span class="history-icon">🕐</span>' +
+          '<span class="history-text">' + escapeHtml(kw) + '</span>' +
+          '</div>';
+      });
+      searchResults.innerHTML = html;
+      // 绑定清空按钮
+      var clearBtn = document.getElementById('clear-history-btn');
+      if (clearBtn) {
+        clearBtn.addEventListener('click', function (e) {
+          e.stopPropagation();
+          clearSearchHistory();
+        });
+      }
+      // 绑定点击历史
+      searchResults.querySelectorAll('.history-item').forEach(function (item) {
+        item.addEventListener('click', function () {
+          var kw = item.getAttribute('data-keyword');
+          searchInput.value = kw;
+          doSearch(kw);
+        });
+      });
+    }
+    panelTitle.textContent = '搜索';
+    searchPanel.classList.remove('hidden');
+  }
+
+  // ===== 输入实时提示（AutoComplete） =====
+  function showAutocomplete(keyword) {
+    if (!map) return;
+    var autoComplete = new AMap.AutoComplete({
+      city: currentCity || '全国',
+      citylimit: false,
+    });
+    autoComplete.search(keyword, function (status, result) {
+      if (status === 'complete' && result.tips && result.tips.length > 0) {
+        var tips = result.tips.filter(function (t) { return t.location && t.location.lng; });
+        if (tips.length === 0) {
+          searchResults.innerHTML = '<div class="history-empty">无匹配结果</div>';
+          panelTitle.textContent = '搜索';
+          searchPanel.classList.remove('hidden');
+          return;
+        }
+
+        var html = '';
+        tips.slice(0, 8).forEach(function (tip) {
+          var addr = (tip.district || '') + (tip.address || '');
+          html += '<div class="result-item autocomplete-item" data-lng="' + tip.location.lng + '" data-lat="' + tip.location.lat + '" data-name="' + escapeHtml(tip.name) + '" data-addr="' + escapeHtml(addr) + '">' +
+            '<div class="result-info">' +
+            '<div class="result-name">' + escapeHtml(tip.name) + '</div>' +
+            '<div class="result-addr">' + escapeHtml(addr || '') + '</div>' +
+            '</div>' +
+            '</div>';
+        });
+        searchResults.innerHTML = html;
+        panelTitle.textContent = '搜索提示';
+        searchPanel.classList.remove('hidden');
+
+        // 绑定点击
+        searchResults.querySelectorAll('.autocomplete-item').forEach(function (item) {
+          item.addEventListener('click', function () {
+            var lng = parseFloat(item.getAttribute('data-lng'));
+            var lat = parseFloat(item.getAttribute('data-lat'));
+            var name = item.getAttribute('data-name');
+            searchInput.value = name;
+            // 点击提示后执行完整搜索
+            doSearch(name);
+          });
+        });
+      } else {
+        searchResults.innerHTML = '<div class="history-empty">无匹配结果</div>';
+        panelTitle.textContent = '搜索';
+        searchPanel.classList.remove('hidden');
+      }
+    });
+  }
 
   // ===== 搜索 =====
   function doSearch(keyword) {
@@ -160,7 +271,9 @@
       return;
     }
 
-    // 搜索策略：先搜当前城市，再搜全国补充
+    // 记录搜索历史
+    addSearchHistory(keyword.trim());
+
     var searchCity = currentCity || '全国';
     var placeSearch = new AMap.PlaceSearch({
       pageSize: 10,
@@ -175,16 +288,11 @@
       if (status === 'complete' && result.poiList && result.poiList.pois && result.poiList.pois.length > 0) {
         var pois = result.poiList.pois;
 
-        // 按城市优先排序：所在市 > 所在省 > 全国
+        // 按城市优先排序
         var myCity = currentCity || '';
-        var myProvince = '';
-
-        // 提取纯城市名（去掉"市"字），如"广州市"→"广州"，"北京"→"北京"
         var myCityName = myCity.replace(/市$/, '');
-        // 提取省份名（去掉"省""市"字），如"广东省"→"广东"，"北京"→"北京"
-        myProvince = myCityName;
+        var myProvince = myCityName;
 
-        // 从城市名推断省份：如用户在"广州市"，省份应为"广东"
         var cityToProvince = {
           '广州': '广东', '深圳': '广东', '东莞': '广东', '佛山': '广东',
           '珠海': '广东', '惠州': '广东', '中山': '广东', '汕头': '广东',
@@ -197,8 +305,7 @@
           '太原': '山西', '石家庄': '河北', '南昌': '江西',
           '哈尔滨': '黑龙江', '长春': '吉林', '沈阳': '辽宁',
           '兰州': '甘肃', '呼和浩特': '内蒙古', '乌鲁木齐': '新疆',
-          '拉萨': '西藏', '银川': '宁夏', '西宁': '青海',
-          '海口': '海南', '石家庄': '河北',
+          '拉萨': '西藏', '银川': '宁夏', '西宁': '青海', '海口': '海南',
         };
         if (cityToProvince[myCityName]) {
           myProvince = cityToProvince[myCityName];
@@ -206,24 +313,18 @@
 
         pois.sort(function (a, b) {
           var aScore = 0, bScore = 0;
-
-          // 所在城市匹配 +3（模糊匹配，"广州"能匹配"广州市"）
           if (myCityName) {
             if ((a.cityname || '').indexOf(myCityName) >= 0) aScore += 3;
             if ((b.cityname || '').indexOf(myCityName) >= 0) bScore += 3;
           }
-
-          // 所在省份匹配 +1
           if (myProvince && myProvince !== myCityName) {
             if ((a.pname || '').indexOf(myProvince) >= 0) aScore += 1;
             if ((b.pname || '').indexOf(myProvince) >= 0) bScore += 1;
           }
-          // 直辖市本身既是城市也是省份，额外+1让同省但不同区的也优先
           if (myCityName && myProvince === myCityName) {
             if ((a.pname || '').indexOf(myCityName) >= 0) aScore += 1;
             if ((b.pname || '').indexOf(myCityName) >= 0) bScore += 1;
           }
-
           return bScore - aScore;
         });
 
@@ -285,6 +386,7 @@
       } else {
         searchResults.innerHTML = '<div class="result-item"><div class="result-info"><div class="result-name">未找到相关地点</div></div></div>';
       }
+      panelTitle.textContent = '搜索结果';
       searchPanel.classList.remove('hidden');
     });
   }
@@ -294,7 +396,7 @@
     searchMarkers = [];
   }
 
-  // ===== 路线规划（多条路线，使用策略10综合推荐） =====
+  // ===== 路线规划（策略10综合推荐） =====
   function planRoutes(endPos, endName) {
     if (!map) return;
 
@@ -307,7 +409,6 @@
 
     clearRouteDisplay();
 
-    // 使用策略10（综合推荐），高德API会自动返回1~3条不同路线
     var driving = new AMap.Driving({
       policy: 10,
       hideMarkers: true,
@@ -323,13 +424,11 @@
           allRouteData.push({ index: idx, route: route, policy: { tag: tag } });
         });
 
-        // 按时间排序，最快的排第一
         allRouteData.sort(function (a, b) { return a.route.time - b.route.time; });
         selectedRouteIndex = 0;
         drawRoutes();
         updateRouteCards();
       } else {
-        // 如果综合推荐策略失败，回退到单条路线
         var fallbackDriving = new AMap.Driving({ policy: 0, hideMarkers: true });
         fallbackDriving.search(startPos, endPos, function (fbStatus, fbResult) {
           if (fbStatus === 'complete' && fbResult.routes && fbResult.routes.length > 0) {
@@ -342,7 +441,7 @@
       }
     });
 
-    // 添加起终点标记
+    // 起终点标记
     var startMarker = new AMap.Marker({
       position: startPos,
       icon: new AMap.Icon({ size: new AMap.Size(24, 34), image: '//webapi.amap.com/theme/v1.3/markers/n/start.png', imageSize: new AMap.Size(24, 34) }),
@@ -358,12 +457,14 @@
   }
 
   function drawRoutes() {
-    // 先清除旧的路线线段
     routePolylines.forEach(function (l) { l.setMap(null); });
     routeLabels.forEach(function (m) {
       if (m.setMap) m.setMap(null);
     });
     routePolylines = [];
+    // 保留起终点标记
+    var startEndMarkers = routeLabels.slice(0, 2);
+    routeLabels = startEndMarkers;
 
     allRouteData.forEach(function (r, idx) {
       var route = r.route;
@@ -375,13 +476,13 @@
         step.path.forEach(function (p) { path.push([p.lng, p.lat]); });
       });
 
-      // 绘制路线
+      // 高德风格配色：全绿色，选中深绿粗线，未选中浅绿细线
       var polyline = new AMap.Polyline({
         path: path,
-        strokeColor: isSelected ? '#52c41a' : '#a8d8a0',
-        strokeWeight: isSelected ? 10 : 4,
-        strokeOpacity: isSelected ? 1 : 0.4,
-        strokeStyle: isSelected ? 'solid' : 'dashed',
+        strokeColor: isSelected ? '#2B85E4' : '#3CB373',
+        strokeWeight: isSelected ? 10 : 5,
+        strokeOpacity: isSelected ? 1 : 0.5,
+        strokeStyle: 'solid',
         lineJoin: 'round',
         lineCap: 'round',
         showDir: isSelected,
@@ -399,9 +500,11 @@
         var mins = time % 60;
         var timeStr = hours > 0 ? hours + 'h' + mins + 'm' : mins + '分钟';
 
+        // 标签颜色跟随路线颜色
+        var labelBg = isSelected ? '#2B85E4' : '#3CB373';
         var label = new AMap.Marker({
           position: midPoint,
-          content: '<div style="background:' + (isSelected ? '#52c41a' : '#a8d8a0') + ';color:white;padding:3px 8px;border-radius:4px;font-size:12px;font-weight:500;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,0.3);">' + timeStr + '</div>',
+          content: '<div style="background:' + labelBg + ';color:white;padding:3px 8px;border-radius:4px;font-size:12px;font-weight:500;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,0.3);">' + timeStr + '</div>',
           offset: new AMap.Pixel(-30, -10),
           zIndex: isSelected ? 150 : 80,
         });
@@ -417,14 +520,12 @@
       });
     });
 
-    // 调整视野
     if (routePolylines.length > 0) {
       map.setFitView(routePolylines, false, [100, 100, 100, 100]);
     }
   }
 
   function updateRouteCards() {
-    // 动态生成路线卡片
     var html = '';
     allRouteData.forEach(function (r, idx) {
       var route = r.route;
@@ -443,7 +544,6 @@
     });
     routeCards.innerHTML = html;
 
-    // 绑定路线卡片点击事件
     routeCards.querySelectorAll('.route-card').forEach(function (card) {
       card.addEventListener('click', function () {
         var idx = parseInt(card.getAttribute('data-index'));
@@ -476,8 +576,36 @@
     if (e.key === 'Enter') doSearch(searchInput.value);
   });
 
+  // 搜索框聚焦：空内容显示历史，有内容显示提示
   searchInput.addEventListener('focus', function () {
     searchInput.select();
+    if (!searchInput.value.trim()) {
+      showHistoryPanel();
+    }
+  });
+
+  // 输入时实时提示（300ms 防抖）
+  searchInput.addEventListener('input', function () {
+    var val = searchInput.value.trim();
+
+    // 清掉之前的定时器
+    if (autocompleteTimer) {
+      clearTimeout(autocompleteTimer);
+      autocompleteTimer = null;
+    }
+
+    if (!val) {
+      // 输入框清空，显示历史
+      showHistoryPanel();
+      return;
+    }
+
+    if (!map) return;
+
+    // 300ms 防抖
+    autocompleteTimer = setTimeout(function () {
+      showAutocomplete(val);
+    }, 300);
   });
 
   closeSearch.addEventListener('click', function () {

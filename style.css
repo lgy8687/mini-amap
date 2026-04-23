@@ -11,6 +11,11 @@
   --radius: 8px;
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
+  /* 高德风格路线配色 */
+  --route-selected: #2B85E4;
+  --route-unselected: #3CB373;
+  --route-card-active-bg: #EBF3FF;
+  --route-card-active-border: #2B85E4;
 }
 
 html, body { height: 100%; overflow: hidden; }
@@ -29,16 +34,37 @@ body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
 .btn-search { background: var(--primary); color: white; border: none; padding: 0 16px; height: 40px; border-radius: 20px; font-size: 14px; font-weight: 500; cursor: pointer; white-space: nowrap; }
 .btn-search:active { background: var(--primary-hover); }
 
-/* 搜索结果面板 */
+/* 搜索面板 */
 .search-panel {
   position: fixed; top: calc(56px + var(--safe-top)); left: 0; right: 0; bottom: 0;
   z-index: 90; background: var(--bg); overflow-y: auto; -webkit-overflow-scrolling: touch;
   transition: opacity 0.2s;
 }
 .search-panel.hidden { opacity: 0; pointer-events: none; }
-.panel-header { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--bg); }
+.panel-header { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--bg); z-index: 1; }
 .panel-header span { font-size: 16px; font-weight: 600; }
 .btn-close { background: none; border: none; font-size: 20px; cursor: pointer; color: var(--text2); padding: 4px 8px; }
+
+/* 搜索历史 */
+.history-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 16px 8px; font-size: 14px; color: var(--text2); font-weight: 500;
+}
+.history-clear {
+  background: none; border: none; font-size: 13px; color: var(--primary);
+  cursor: pointer; padding: 2px 8px;
+}
+.history-clear:active { opacity: 0.6; }
+.history-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 16px; cursor: pointer; border-bottom: 1px solid var(--border);
+}
+.history-item:active { background: var(--bg2); }
+.history-icon { font-size: 14px; flex-shrink: 0; }
+.history-text { font-size: 15px; color: var(--text); }
+.history-empty {
+  padding: 32px 16px; text-align: center; color: var(--text2); font-size: 14px;
+}
 
 /* 搜索结果项 */
 .result-item {
@@ -53,6 +79,10 @@ body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
 .btn-nav { background: var(--primary); color: white; border: none; padding: 6px 14px; border-radius: 16px; font-size: 13px; font-weight: 500; cursor: pointer; flex-shrink: 0; }
 .btn-nav:active { background: var(--primary-hover); }
 
+/* 自动补全项 */
+.autocomplete-item { padding: 10px 16px; }
+.autocomplete-item .result-name { font-size: 14px; }
+
 /* 地图 */
 #map-container { position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 1; }
 
@@ -61,7 +91,7 @@ body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
 .btn-float { width: 48px; height: 48px; border-radius: 50%; border: none; background: var(--bg); box-shadow: 0 2px 12px rgba(0,0,0,0.1); font-size: 22px; cursor: pointer; display: flex; align-items: center; justify-content: center; }
 .btn-float:active { transform: scale(0.92); }
 
-/* 路线选择卡片 */
+/* 路线选择卡片 - 高德风格配色 */
 .route-cards {
   position: fixed; left: 0; right: 0; bottom: calc(12px + var(--safe-bottom));
   z-index: 90; display: flex; gap: 8px; padding: 0 12px;
@@ -76,11 +106,15 @@ body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
   text-align: center;
 }
 .route-card:active { transform: scale(0.96); }
-.route-card.active { border-color: var(--primary); background: #e6f0ff; }
-.route-card-time { font-size: 20px; font-weight: 700; }
+.route-card.active {
+  border-color: var(--route-card-active-border);
+  background: var(--route-card-active-bg);
+}
+.route-card-time { font-size: 20px; font-weight: 700; color: var(--text); }
+.route-card.active .route-card-time { color: var(--route-selected); }
 .route-card-info { font-size: 12px; color: var(--text2); margin: 4px 0 6px; }
 .route-card-tag { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 4px; background: var(--bg2); color: var(--text2); }
-.route-card.active .route-card-tag { background: var(--primary); color: white; }
+.route-card.active .route-card-tag { background: var(--route-selected); color: white; }
 
 /* Key 弹窗 */
 .modal { position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 1000; display: flex; align-items: center; justify-content: center; backdrop-filter: blur(4px); padding: 20px; }
