@@ -96,13 +96,25 @@
     geo.getCurrentPosition(function (status, result) {
       if (status === 'complete') {
         currentLocation = result.position;
-        // 获取所在城市，用于搜索优先排序
-        if (result.addressComponent && result.addressComponent.city) {
-          currentCity = result.addressComponent.city;
-        } else if (result.addressComponent && result.addressComponent.province) {
-          currentCity = result.addressComponent.province;
-        }
         map.setCenter(result.position);
+        // 通过逆地理编码获取城市信息，比 Geolocation 的 addressComponent 更可靠
+        updateCurrentCity(result.position);
+      }
+    });
+  }
+
+  // ===== 更新当前城市 =====
+  function updateCurrentCity(lnglat) {
+    var geocoder = new AMap.Geocoder();
+    geocoder.getAddress(lnglat, function (status, result) {
+      if (status === 'complete' && result.regeocode && result.regeocode.addressComponent) {
+        var comp = result.regeocode.addressComponent;
+        // 直辖市 city 为空，用 province 代替
+        if (comp.city && comp.city.length > 0) {
+          currentCity = comp.city;
+        } else if (comp.province && comp.province.length > 0) {
+          currentCity = comp.province;
+        }
       }
     });
   }
@@ -164,30 +176,53 @@
         var pois = result.poiList.pois;
 
         // 按城市优先排序：所在市 > 所在省 > 全国
-        var myCity = currentCity;
+        var myCity = currentCity || '';
         var myProvince = '';
-        // 从定位城市提取省份（直辖市特殊处理）
-        var municipalities = ['北京', '上海', '天津', '重庆'];
-        var isMunicipality = municipalities.some(function(m) { return myCity.indexOf(m) >= 0; });
-        if (isMunicipality) {
-          myProvince = myCity;
-        } else if (myCity.length > 0) {
-          // 非直辖市，城市名一般含省信息；用省份做二级排序
-          myProvince = myCity.replace(/[市县区]$/, '');
+
+        // 提取纯城市名（去掉"市"字），如"广州市"→"广州"，"北京"→"北京"
+        var myCityName = myCity.replace(/市$/, '');
+        // 提取省份名（去掉"省""市"字），如"广东省"→"广东"，"北京"→"北京"
+        myProvince = myCityName;
+
+        // 从城市名推断省份：如用户在"广州市"，省份应为"广东"
+        var cityToProvince = {
+          '广州': '广东', '深圳': '广东', '东莞': '广东', '佛山': '广东',
+          '珠海': '广东', '惠州': '广东', '中山': '广东', '汕头': '广东',
+          '杭州': '浙江', '宁波': '浙江', '温州': '浙江',
+          '南京': '江苏', '苏州': '江苏', '无锡': '江苏', '常州': '江苏',
+          '成都': '四川', '武汉': '湖北', '长沙': '湖南', '郑州': '河南',
+          '西安': '陕西', '济南': '山东', '青岛': '山东',
+          '合肥': '安徽', '福州': '福建', '厦门': '福建',
+          '昆明': '云南', '贵阳': '贵州', '南宁': '广西',
+          '太原': '山西', '石家庄': '河北', '南昌': '江西',
+          '哈尔滨': '黑龙江', '长春': '吉林', '沈阳': '辽宁',
+          '兰州': '甘肃', '呼和浩特': '内蒙古', '乌鲁木齐': '新疆',
+          '拉萨': '西藏', '银川': '宁夏', '西宁': '青海',
+          '海口': '海南', '石家庄': '河北',
+        };
+        if (cityToProvince[myCityName]) {
+          myProvince = cityToProvince[myCityName];
         }
 
         pois.sort(function (a, b) {
-          var aCity = (a.cityname || '') + (a.adname || '');
-          var bCity = (b.cityname || '') + (b.adname || '');
           var aScore = 0, bScore = 0;
 
-          // 所在城市匹配 +3
-          if (myCity && aCity.indexOf(myCity.replace(/市$/, '')) >= 0) aScore += 3;
-          if (myCity && bCity.indexOf(myCity.replace(/市$/, '')) >= 0) bScore += 3;
+          // 所在城市匹配 +3（模糊匹配，"广州"能匹配"广州市"）
+          if (myCityName) {
+            if ((a.cityname || '').indexOf(myCityName) >= 0) aScore += 3;
+            if ((b.cityname || '').indexOf(myCityName) >= 0) bScore += 3;
+          }
 
           // 所在省份匹配 +1
-          if (myProvince && (a.pname || '').indexOf(myProvince) >= 0) aScore += 1;
-          if (myProvince && (b.pname || '').indexOf(myProvince) >= 0) bScore += 1;
+          if (myProvince && myProvince !== myCityName) {
+            if ((a.pname || '').indexOf(myProvince) >= 0) aScore += 1;
+            if ((b.pname || '').indexOf(myProvince) >= 0) bScore += 1;
+          }
+          // 直辖市本身既是城市也是省份，额外+1让同省但不同区的也优先
+          if (myCityName && myProvince === myCityName) {
+            if ((a.pname || '').indexOf(myCityName) >= 0) aScore += 1;
+            if ((b.pname || '').indexOf(myCityName) >= 0) bScore += 1;
+          }
 
           return bScore - aScore;
         });
