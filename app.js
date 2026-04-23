@@ -296,24 +296,47 @@
 
   // ===== 地点搜索 =====
   function searchPlace(keyword) {
-    if (!keyword.trim()) return;
+    console.log('searchPlace 调用，关键词:', keyword);
+    
+    if (!keyword || !keyword.trim()) {
+      console.log('关键词为空');
+      return;
+    }
 
-    getCurrentCity((city) => {
-      searchInCity(keyword, city, (localResults) => {
-        if (localResults && localResults.length > 0) {
-          renderAndShowResults(localResults);
+    if (!state.map) {
+      console.log('地图未初始化');
+      dom.searchResults.innerHTML = '<div class="result-item"><div class="result-info"><div class="result-name">地图未加载，请先配置 Key</div></div></div>';
+      openSearchPanel();
+      return;
+    }
+
+    // 简化：直接搜索全国
+    try {
+      const autoComplete = new AMap.AutoComplete({
+        city: '全国',
+      });
+
+      autoComplete.search(keyword, (status, result) => {
+        console.log('搜索结果:', status, result);
+        
+        if (status === 'complete' && result.tips && result.tips.length > 0) {
+          const tips = result.tips.filter(tip => tip.location && tip.location.lng);
+          if (tips.length > 0) {
+            renderAndShowResults(tips);
+          } else {
+            dom.searchResults.innerHTML = '<div class="result-item"><div class="result-info"><div class="result-name">未找到有效地点</div></div></div>';
+            openSearchPanel();
+          }
         } else {
-          searchInCity(keyword, '全国', (nationalResults) => {
-            if (nationalResults && nationalResults.length > 0) {
-              renderAndShowResults(nationalResults);
-            } else {
-              dom.searchResults.innerHTML = '<div class="result-item"><div class="result-info"><div class="result-name">未找到相关地点</div></div></div>';
-              openSearchPanel();
-            }
-          });
+          dom.searchResults.innerHTML = '<div class="result-item"><div class="result-info"><div class="result-name">未找到相关地点</div></div></div>';
+          openSearchPanel();
         }
       });
-    });
+    } catch (e) {
+      console.error('搜索出错:', e);
+      dom.searchResults.innerHTML = '<div class="result-item"><div class="result-info"><div class="result-name">搜索出错: ' + e.message + '</div></div></div>';
+      openSearchPanel();
+    }
   }
 
   function searchInCity(keyword, city, callback) {
@@ -858,12 +881,18 @@
 
   // ===== 事件绑定 =====
   function bindEvents() {
+    console.log('绑定搜索事件');
+    
     dom.searchBtn.addEventListener('click', () => {
+      console.log('搜索按钮点击，关键词:', dom.searchInput.value);
       searchPlace(dom.searchInput.value);
     });
 
     dom.searchInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') searchPlace(dom.searchInput.value);
+      if (e.key === 'Enter') {
+        console.log('回车搜索，关键词:', dom.searchInput.value);
+        searchPlace(dom.searchInput.value);
+      }
     });
 
     [dom.searchInput, dom.routeStart, dom.routeEnd].forEach((input) => {
