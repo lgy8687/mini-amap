@@ -14,6 +14,7 @@
   var key = localStorage.getItem('amap_key') || '';
   var securityCode = localStorage.getItem('amap_security') || '';
   var currentLocation = null;
+  var currentCity = '';  // 定位所在城市
   var searchMarkers = [];
   var routePolylines = [];
   var routeLabels = [];
@@ -95,6 +96,12 @@
     geo.getCurrentPosition(function (status, result) {
       if (status === 'complete') {
         currentLocation = result.position;
+        // 获取所在城市，用于搜索优先排序
+        if (result.addressComponent && result.addressComponent.city) {
+          currentCity = result.addressComponent.city;
+        } else if (result.addressComponent && result.addressComponent.province) {
+          currentCity = result.addressComponent.province;
+        }
         map.setCenter(result.position);
       }
     });
@@ -141,10 +148,12 @@
       return;
     }
 
+    // 搜索策略：先搜当前城市，再搜全国补充
+    var searchCity = currentCity || '全国';
     var placeSearch = new AMap.PlaceSearch({
       pageSize: 10,
       pageIndex: 1,
-      city: '全国',
+      city: searchCity,
       citylimit: false,
     });
 
@@ -153,6 +162,35 @@
 
       if (status === 'complete' && result.poiList && result.poiList.pois && result.poiList.pois.length > 0) {
         var pois = result.poiList.pois;
+
+        // 按城市优先排序：所在市 > 所在省 > 全国
+        var myCity = currentCity;
+        var myProvince = '';
+        // 从定位城市提取省份（直辖市特殊处理）
+        var municipalities = ['北京', '上海', '天津', '重庆'];
+        var isMunicipality = municipalities.some(function(m) { return myCity.indexOf(m) >= 0; });
+        if (isMunicipality) {
+          myProvince = myCity;
+        } else if (myCity.length > 0) {
+          // 非直辖市，城市名一般含省信息；用省份做二级排序
+          myProvince = myCity.replace(/[市县区]$/, '');
+        }
+
+        pois.sort(function (a, b) {
+          var aCity = (a.cityname || '') + (a.adname || '');
+          var bCity = (b.cityname || '') + (b.adname || '');
+          var aScore = 0, bScore = 0;
+
+          // 所在城市匹配 +3
+          if (myCity && aCity.indexOf(myCity.replace(/市$/, '')) >= 0) aScore += 3;
+          if (myCity && bCity.indexOf(myCity.replace(/市$/, '')) >= 0) bScore += 3;
+
+          // 所在省份匹配 +1
+          if (myProvince && (a.pname || '').indexOf(myProvince) >= 0) aScore += 1;
+          if (myProvince && (b.pname || '').indexOf(myProvince) >= 0) bScore += 1;
+
+          return bScore - aScore;
+        });
 
         var html = '';
         pois.slice(0, 10).forEach(function (poi, i) {
@@ -221,7 +259,7 @@
     searchMarkers = [];
   }
 
-  // ===== 路线规划（三条路线） =====
+  // ===== 路线规划（多条路线，使用策略10综合推荐） =====
   function planRoutes(endPos, endName) {
     if (!map) return;
 
@@ -234,31 +272,39 @@
 
     clearRouteDisplay();
 
-    var policies = [
-      { policy: 0, name: '推荐', tag: '大众常选' },
-      { policy: 1, name: '最短', tag: '距离最短' },
-      { policy: 5, name: '避堵', tag: '躲避拥堵' },
-    ];
+    // 使用策略10（综合推荐），高德API会自动返回1~3条不同路线
+    var driving = new AMap.Driving({
+      policy: 10,
+      hideMarkers: true,
+    });
 
-    allRouteData = [];
-    var completed = 0;
+    driving.search(startPos, endPos, function (status, result) {
+      if (status === 'complete' && result.routes && result.routes.length > 0) {
+        var routes = result.routes;
+        var policyTags = ['推荐', '备选一', '备选二'];
 
-    policies.forEach(function (p, index) {
-      var driving = new AMap.Driving({ policy: p.policy, hideMarkers: true });
-      driving.search(startPos, endPos, function (status, result) {
-        completed++;
-        if (status === 'complete' && result.routes && result.routes.length > 0) {
-          allRouteData.push({ index: index, route: result.routes[0], policy: p });
-        }
-        if (completed === 3) {
-          if (allRouteData.length > 0) {
-            allRouteData.sort(function (a, b) { return a.route.time - b.route.time; });
+        routes.forEach(function (route, idx) {
+          var tag = idx < policyTags.length ? policyTags[idx] : '备选' + (idx + 1);
+          allRouteData.push({ index: idx, route: route, policy: { tag: tag } });
+        });
+
+        // 按时间排序，最快的排第一
+        allRouteData.sort(function (a, b) { return a.route.time - b.route.time; });
+        selectedRouteIndex = 0;
+        drawRoutes();
+        updateRouteCards();
+      } else {
+        // 如果综合推荐策略失败，回退到单条路线
+        var fallbackDriving = new AMap.Driving({ policy: 0, hideMarkers: true });
+        fallbackDriving.search(startPos, endPos, function (fbStatus, fbResult) {
+          if (fbStatus === 'complete' && fbResult.routes && fbResult.routes.length > 0) {
+            allRouteData.push({ index: 0, route: fbResult.routes[0], policy: { tag: '推荐' } });
             selectedRouteIndex = 0;
             drawRoutes();
             updateRouteCards();
           }
-        }
-      });
+        });
+      }
     });
 
     // 添加起终点标记
@@ -343,20 +389,37 @@
   }
 
   function updateRouteCards() {
-    var cards = routeCards.querySelectorAll('.route-card');
+    // 动态生成路线卡片
+    var html = '';
     allRouteData.forEach(function (r, idx) {
       var route = r.route;
       var time = Math.ceil(route.time / 60);
       var distance = (route.distance / 1000).toFixed(1);
       var lights = route.steps ? route.steps.filter(function (s) { return s.assistant_action && s.assistant_action.indexOf('红绿灯') >= 0; }).length : 0;
-      var card = cards[idx];
-      if (card) {
-        card.querySelector('.route-card-time').textContent = time + '分钟';
-        card.querySelector('.route-card-info').textContent = distance + '公里 · 🚦' + lights;
-        card.querySelector('.route-card-tag').textContent = r.policy.tag;
-        card.classList.toggle('active', idx === selectedRouteIndex);
-      }
+      var hours = Math.floor(time / 60);
+      var mins = time % 60;
+      var timeStr = hours > 0 ? hours + 'h' + mins + 'm' : mins + '分钟';
+
+      html += '<div class="route-card' + (idx === selectedRouteIndex ? ' active' : '') + '" data-index="' + idx + '">' +
+        '<div class="route-card-time">' + timeStr + '</div>' +
+        '<div class="route-card-info">' + distance + '公里 · 🚦' + lights + '</div>' +
+        '<div class="route-card-tag">' + r.policy.tag + '</div>' +
+        '</div>';
     });
+    routeCards.innerHTML = html;
+
+    // 绑定路线卡片点击事件
+    routeCards.querySelectorAll('.route-card').forEach(function (card) {
+      card.addEventListener('click', function () {
+        var idx = parseInt(card.getAttribute('data-index'));
+        if (allRouteData[idx]) {
+          selectedRouteIndex = idx;
+          drawRoutes();
+          updateRouteCards();
+        }
+      });
+    });
+
     routeCards.classList.remove('hidden');
   }
 
@@ -388,18 +451,6 @@
 
   locateBtn.addEventListener('click', function () {
     doLocate();
-  });
-
-  // 路线卡片点击
-  routeCards.querySelectorAll('.route-card').forEach(function (card) {
-    card.addEventListener('click', function () {
-      var idx = parseInt(card.getAttribute('data-index'));
-      if (allRouteData[idx]) {
-        selectedRouteIndex = idx;
-        drawRoutes();
-        updateRouteCards();
-      }
-    });
   });
 
   // Key 保存
