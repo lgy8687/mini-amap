@@ -243,15 +243,19 @@
         panelTitle.textContent = '搜索提示';
         searchPanel.classList.remove('hidden');
 
-        // 绑定点击
+        // 绑定点击：提示词直接导航，不需要再走搜索结果
         searchResults.querySelectorAll('.autocomplete-item').forEach(function (item) {
           item.addEventListener('click', function () {
             var lng = parseFloat(item.getAttribute('data-lng'));
             var lat = parseFloat(item.getAttribute('data-lat'));
             var name = item.getAttribute('data-name');
             searchInput.value = name;
-            // 点击提示后执行完整搜索
-            doSearch(name);
+            addSearchHistory(name);
+            searchPanel.classList.add('hidden');
+            clearSearchMarkers();
+            // 直接规划路线
+            var endLngLat = new AMap.LngLat(lng, lat);
+            planRoutes(endLngLat, name);
           });
         });
       } else {
@@ -359,27 +363,28 @@
           map.setFitView(searchMarkers, false, [60, 60, 60, 120]);
         }
 
-        // 绑定点击事件
+        // 绑定点击事件：点击搜索结果直接导航
         searchResults.querySelectorAll('.result-item').forEach(function (item) {
           item.addEventListener('click', function (e) {
             if (e.target.classList.contains('btn-nav')) return;
             var lng = parseFloat(item.getAttribute('data-lng'));
             var lat = parseFloat(item.getAttribute('data-lat'));
             var name = item.getAttribute('data-name');
-            map.setZoomAndCenter(16, [lng, lat]);
-            showInfoWindow(new AMap.LngLat(lng, lat), name);
             searchPanel.classList.add('hidden');
+              clearSearchMarkers();
+              planRoutes(new AMap.LngLat(lng, lat), name);
           });
         });
 
-        // 导航按钮
+        // 导航按钮（保留，功能同点击）
         searchResults.querySelectorAll('.btn-nav').forEach(function (btn) {
           btn.addEventListener('click', function () {
             var lng = parseFloat(btn.getAttribute('data-lng'));
             var lat = parseFloat(btn.getAttribute('data-lat'));
             var name = btn.getAttribute('data-name');
-            planRoutes(new AMap.LngLat(lng, lat), name);
             searchPanel.classList.add('hidden');
+              clearSearchMarkers();
+            planRoutes(new AMap.LngLat(lng, lat), name);
           });
         });
 
@@ -476,12 +481,12 @@
         step.path.forEach(function (p) { path.push([p.lng, p.lat]); });
       });
 
-      // 高德风格配色：全绿色，选中深绿粗线，未选中浅绿细线
+      // 高德风格配色：全绿色，选中深绿粗线，未选中浅绿细线，全部实线可见
       var polyline = new AMap.Polyline({
         path: path,
-        strokeColor: isSelected ? '#2B85E4' : '#3CB373',
+        strokeColor: isSelected ? '#1AAD19' : '#5EC776',
         strokeWeight: isSelected ? 10 : 5,
-        strokeOpacity: isSelected ? 1 : 0.5,
+        strokeOpacity: isSelected ? 1 : 0.7,
         strokeStyle: 'solid',
         lineJoin: 'round',
         lineCap: 'round',
@@ -501,7 +506,7 @@
         var timeStr = hours > 0 ? hours + 'h' + mins + 'm' : mins + '分钟';
 
         // 标签颜色跟随路线颜色
-        var labelBg = isSelected ? '#2B85E4' : '#3CB373';
+        var labelBg = isSelected ? '#1AAD19' : '#5EC776';
         var label = new AMap.Marker({
           position: midPoint,
           content: '<div style="background:' + labelBg + ';color:white;padding:3px 8px;border-radius:4px;font-size:12px;font-weight:500;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,0.3);">' + timeStr + '</div>',

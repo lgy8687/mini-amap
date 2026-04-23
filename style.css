@@ -12,10 +12,10 @@
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
   /* 高德风格路线配色 */
-  --route-selected: #2B85E4;
-  --route-unselected: #3CB373;
-  --route-card-active-bg: #EBF3FF;
-  --route-card-active-border: #2B85E4;
+  --route-selected: #1AAD19;
+  --route-unselected: #5EC776;
+  --route-card-active-bg: #E8F8E8;
+  --route-card-active-border: #1AAD19;
 }
 
 html, body { height: 100%; overflow: hidden; }
