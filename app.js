@@ -637,11 +637,11 @@
   trafficBtn.addEventListener('click', function () {
     if (!trafficLayer) return;
     if (trafficVisible) {
-      trafficLayer.hide();
+      trafficLayer.setMap(null);
       trafficVisible = false;
       trafficBtn.classList.remove('active');
     } else {
-      trafficLayer.show();
+      trafficLayer.setMap(map);
       trafficVisible = true;
       trafficBtn.classList.add('active');
     }
