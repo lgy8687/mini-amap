@@ -34,6 +34,17 @@
   var keyError = document.getElementById('key-error');
   var routeCards = document.getElementById('route-cards');
 
+  // ===== HTML 转义 =====
+  function escapeHtml(str) {
+    if (!str) return '';
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
   // ===== 加载地图 =====
   function loadMap() {
     if (window.AMap) {
@@ -48,8 +59,16 @@
       window._AMapSecurityConfig = { securityJsCode: securityCode };
     }
     var s = document.createElement('script');
-    s.src = 'https://webapi.amap.com/maps?v=2.0&key=' + key + '&plugin=AMap.Geolocation,AMap.PlaceSearch,AMap.AutoComplete,AMap.Geocoder,AMap.Driving';
-    s.onload = function () { initMap(); };
+    s.src = 'https://webapi.amap.com/maps?v=2.0&key=' + key + '&plugin=AMap.Geolocation,AMap.PlaceSearch,AMap.Geocoder,AMap.Driving';
+    s.onload = function () {
+      // 高德 JS API 加载成功不等于 Key 有效，需要检查 AMap 是否真正可用
+      if (window.AMap && window.AMap.Map) {
+        initMap();
+      } else {
+        keyError.textContent = 'Key 无效，请检查后重新输入';
+        keyModal.classList.remove('hidden');
+      }
+    };
     s.onerror = function () {
       keyError.textContent = '地图加载失败，请检查Key';
       keyModal.classList.remove('hidden');
@@ -94,10 +113,11 @@
 
   // ===== 信息窗口 =====
   function showInfoWindow(lnglat, title) {
+    var safeTitle = escapeHtml(title);
     var content = '<div class="info-window">' +
-      '<div class="iw-title">' + title + '</div>' +
+      '<div class="iw-title">' + safeTitle + '</div>' +
       '<div class="iw-actions">' +
-      '<button class="iw-btn" onclick="window._navFrom(this)" data-lng="' + lnglat.lng + '" data-lat="' + lnglat.lat + '" data-name="' + title + '">导航到这里</button>' +
+      '<button class="iw-btn" onclick="window._navFrom(this)" data-lng="' + lnglat.lng + '" data-lat="' + lnglat.lat + '" data-name="' + safeTitle + '">导航到这里</button>' +
       '</div></div>';
     var infoWindow = new AMap.InfoWindow({ content: content, offset: new AMap.Pixel(0, -36) });
     infoWindow.open(map, lnglat);
@@ -121,42 +141,42 @@
       return;
     }
 
-    var autoComplete = new AMap.AutoComplete({ city: '全国' });
-    autoComplete.search(keyword, function (status, result) {
+    var placeSearch = new AMap.PlaceSearch({
+      pageSize: 10,
+      pageIndex: 1,
+      city: '全国',
+      citylimit: false,
+    });
+
+    placeSearch.search(keyword, function (status, result) {
       clearSearchMarkers();
 
-      if (status === 'complete' && result.tips && result.tips.length > 0) {
-        var tips = result.tips.filter(function (t) { return t.location && t.location.lng; });
-
-        // 按距离排序
-        if (currentLocation && tips.length > 0) {
-          tips.sort(function (a, b) {
-            return currentLocation.distance([a.location.lng, a.location.lat]) - currentLocation.distance([b.location.lng, b.location.lat]);
-          });
-        }
+      if (status === 'complete' && result.poiList && result.poiList.pois && result.poiList.pois.length > 0) {
+        var pois = result.poiList.pois;
 
         var html = '';
-        tips.slice(0, 10).forEach(function (tip, i) {
-          html += '<div class="result-item" data-lng="' + tip.location.lng + '" data-lat="' + tip.location.lat + '" data-name="' + tip.name + '" data-addr="' + (tip.district || '') + ' ' + (tip.address || '') + '">' +
+        pois.slice(0, 10).forEach(function (poi, i) {
+          var addr = (poi.pname || '') + (poi.cityname || '') + (poi.adname || '') + (poi.address || '');
+          html += '<div class="result-item" data-lng="' + poi.location.lng + '" data-lat="' + poi.location.lat + '" data-name="' + escapeHtml(poi.name) + '" data-addr="' + escapeHtml(addr) + '">' +
             '<div class="result-index">' + (i + 1) + '</div>' +
             '<div class="result-info">' +
-            '<div class="result-name">' + tip.name + '</div>' +
-            '<div class="result-addr">' + (tip.district || '') + ' ' + (tip.address || '') + '</div>' +
+            '<div class="result-name">' + escapeHtml(poi.name) + '</div>' +
+            '<div class="result-addr">' + escapeHtml(addr || '暂无地址信息') + '</div>' +
             '</div>' +
-            '<button class="btn-nav" data-lng="' + tip.location.lng + '" data-lat="' + tip.location.lat + '" data-name="' + tip.name + '">导航</button>' +
+            '<button class="btn-nav" data-lng="' + poi.location.lng + '" data-lat="' + poi.location.lat + '" data-name="' + escapeHtml(poi.name) + '">导航</button>' +
             '</div>';
         });
         searchResults.innerHTML = html;
 
         // 添加地图标记
-        tips.slice(0, 10).forEach(function (tip, i) {
+        pois.slice(0, 10).forEach(function (poi, i) {
           var marker = new AMap.Marker({
-            position: [tip.location.lng, tip.location.lat],
-            title: tip.name,
+            position: [poi.location.lng, poi.location.lat],
+            title: poi.name,
             label: { content: '' + (i + 1), direction: 'top' },
           });
           marker.on('click', function () {
-            showInfoWindow(new AMap.LngLat(tip.location.lng, tip.location.lat), tip.name);
+            showInfoWindow(new AMap.LngLat(poi.location.lng, poi.location.lat), poi.name);
           });
           searchMarkers.push(marker);
         });
