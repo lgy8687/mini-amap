@@ -1,5 +1,5 @@
 /**
- * 极简地图 - 从头重写，保证基础功能可用
+ * 极简地图 - 高德风格 UI 重写
  */
 
 (function () {
@@ -13,24 +13,38 @@
   var map = null;
   var key = localStorage.getItem('amap_key') || '';
   var securityCode = localStorage.getItem('amap_security') || '';
-  var currentLocation = null;
+  var currentLocation = null;     // LngLat
   var currentCity = '';
   var searchMarkers = [];
   var routePolylines = [];
   var routeLabels = [];
   var allRouteData = [];
   var selectedRouteIndex = 0;
-  var autocompleteTimer = null;  // 输入提示防抖定时器
-  var trafficLayer = null;        // 实时路况图层
-  var trafficVisible = true;      // 路况默认开启
+  var autocompleteTimer = null;
+  var trafficLayer = null;
+  var trafficVisible = true;
+
+  // 路线规划状态
+  var routeEnd = null;            // { pos: LngLat, name: string }
+  var routeStart = null;          // { pos: LngLat, name: string }
+  var currentMode = 'driving';    // driving | transit | walking | riding
 
   // ===== DOM =====
+  var homeSearch = document.getElementById('home-search');
+  var searchPage = document.getElementById('search-page');
+  var searchBack = document.getElementById('search-back');
   var searchInput = document.getElementById('search-input');
-  var searchBtn = document.getElementById('search-btn');
-  var searchPanel = document.getElementById('search-panel');
-  var searchResults = document.getElementById('search-results');
-  var panelTitle = document.getElementById('panel-title');
-  var closeSearch = document.getElementById('close-search');
+  var searchClearInput = document.getElementById('search-clear-input');
+  var searchBody = document.getElementById('search-body');
+  var routePage = document.getElementById('route-page');
+  var routeBack = document.getElementById('route-back');
+  var routeStartText = document.getElementById('route-start-text');
+  var routeEndText = document.getElementById('route-end-text');
+  var swapBtn = document.getElementById('swap-btn');
+  var routeModeLabels = document.querySelectorAll('.route-mode');
+  var routeBottom = document.getElementById('route-bottom');
+  var routeLoading = document.getElementById('route-loading');
+  var routeCardsEl = document.getElementById('route-cards');
   var locateBtn = document.getElementById('locate-btn');
   var trafficBtn = document.getElementById('traffic-btn');
   var keyModal = document.getElementById('key-modal');
@@ -38,9 +52,8 @@
   var securityInput = document.getElementById('security-input');
   var saveKey = document.getElementById('save-key');
   var keyError = document.getElementById('key-error');
-  var routeCards = document.getElementById('route-cards');
 
-  // ===== HTML 转义 =====
+  // ===== 工具 =====
   function escapeHtml(str) {
     if (!str) return '';
     return String(str)
@@ -51,48 +64,177 @@
       .replace(/'/g, '&#39;');
   }
 
+  function formatTime(seconds) {
+    var mins = Math.ceil(seconds / 60);
+    var h = Math.floor(mins / 60);
+    var m = mins % 60;
+    if (h > 0) return h + '小时' + (m > 0 ? m + '分' : '');
+    return m + '分钟';
+  }
+
+  function formatDistance(meters) {
+    if (meters >= 1000) return (meters / 1000).toFixed(1) + '公里';
+    return Math.round(meters) + '米';
+  }
+
+  // ===== 页面切换 =====
+  function showSearchPage() {
+    searchPage.classList.remove('hidden');
+    searchInput.focus();
+    // 空输入显示历史
+    if (!searchInput.value.trim()) {
+      renderHistory();
+    }
+  }
+
+  function hideSearchPage() {
+    searchPage.classList.add('hidden');
+    searchInput.blur();
+  }
+
+  function showRoutePage() {
+    routePage.classList.remove('hidden');
+  }
+
+  function hideRoutePage() {
+    routePage.classList.add('hidden');
+    clearRouteDisplay();
+  }
+
   // ===== 搜索历史 =====
   var HISTORY_KEY = 'mini-amap-history';
   var MAX_HISTORY = 5;
 
   function getSearchHistory() {
-    try {
-      return JSON.parse(localStorage.getItem(HISTORY_KEY)) || [];
-    } catch (e) { return []; }
+    try { return JSON.parse(localStorage.getItem(HISTORY_KEY)) || []; }
+    catch (e) { return []; }
   }
 
   function addSearchHistory(keyword) {
     if (!keyword || !keyword.trim()) return;
     var list = getSearchHistory();
-    // 去重：如果已存在则移到最前
     var idx = list.indexOf(keyword);
     if (idx >= 0) list.splice(idx, 1);
     list.unshift(keyword);
-    // 超过5条删除最旧的
     if (list.length > MAX_HISTORY) list = list.slice(0, MAX_HISTORY);
     localStorage.setItem(HISTORY_KEY, JSON.stringify(list));
   }
 
   function clearSearchHistory() {
     localStorage.removeItem(HISTORY_KEY);
-    showHistoryPanel();
+    renderHistory();
+  }
+
+  // ===== 搜索页面内容渲染 =====
+
+  // 渲染搜索历史（tag 样式）
+  function renderHistory() {
+    var list = getSearchHistory();
+    if (list.length === 0) {
+      searchBody.innerHTML = '<div class="history-empty">暂无搜索记录</div>';
+      return;
+    }
+    var html = '<div class="history-section">' +
+      '<div class="history-header">' +
+      '<span class="history-title">搜索历史</span>' +
+      '<button class="history-clear" id="clear-history-btn">清空</button>' +
+      '</div>' +
+      '<div class="history-tags">';
+    list.forEach(function (kw) {
+      html += '<span class="history-tag" data-keyword="' + escapeHtml(kw) + '">' + escapeHtml(kw) + '</span>';
+    });
+    html += '</div></div>';
+    searchBody.innerHTML = html;
+
+    // 绑定清空
+    var clearBtn = document.getElementById('clear-history-btn');
+    if (clearBtn) {
+      clearBtn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        clearSearchHistory();
+      });
+    }
+    // 绑定点击历史 tag → 搜索
+    searchBody.querySelectorAll('.history-tag').forEach(function (tag) {
+      tag.addEventListener('click', function () {
+        var kw = tag.getAttribute('data-keyword');
+        searchInput.value = kw;
+        doSearch(kw);
+      });
+    });
+  }
+
+  // 渲染自动补全提示
+  function renderSuggestions(tips) {
+    var html = '';
+    tips.forEach(function (tip) {
+      var addr = (tip.district || '') + (tip.address || '');
+      html += '<div class="suggest-item" data-lng="' + tip.location.lng + '" data-lat="' + tip.location.lat + '" data-name="' + escapeHtml(tip.name) + '" data-addr="' + escapeHtml(addr) + '">' +
+        '<span class="suggest-icon">📍</span>' +
+        '<div class="suggest-info">' +
+        '<div class="suggest-name">' + escapeHtml(tip.name) + '</div>' +
+        '<div class="suggest-addr">' + escapeHtml(addr || '') + '</div>' +
+        '</div></div>';
+    });
+    searchBody.innerHTML = html;
+
+    // 点击提示 → 设置终点并打开路线规划页
+    searchBody.querySelectorAll('.suggest-item').forEach(function (item) {
+      item.addEventListener('click', function () {
+        var lng = parseFloat(item.getAttribute('data-lng'));
+        var lat = parseFloat(item.getAttribute('data-lat'));
+        var name = item.getAttribute('data-name');
+        addSearchHistory(name);
+        setRouteDestination(new AMap.LngLat(lng, lat), name);
+        hideSearchPage();
+      });
+    });
+  }
+
+  // 渲染搜索结果
+  function renderSearchResults(pois) {
+    var html = '';
+    pois.forEach(function (poi) {
+      var addr = (poi.pname || '') + (poi.cityname || '') + (poi.adname || '') + (poi.address || '');
+      html += '<div class="result-item" data-lng="' + poi.location.lng + '" data-lat="' + poi.location.lat + '" data-name="' + escapeHtml(poi.name) + '">' +
+        '<div class="result-name">' + escapeHtml(poi.name) + '</div>' +
+        '<div class="result-addr">' + escapeHtml(addr || '暂无地址信息') + '</div>' +
+        '</div>';
+    });
+    searchBody.innerHTML = html;
+
+    // 点击结果 → 设置终点并打开路线规划页
+    searchBody.querySelectorAll('.result-item').forEach(function (item) {
+      item.addEventListener('click', function () {
+        var lng = parseFloat(item.getAttribute('data-lng'));
+        var lat = parseFloat(item.getAttribute('data-lat'));
+        var name = item.getAttribute('data-name');
+        addSearchHistory(name);
+        clearSearchMarkers();
+        setRouteDestination(new AMap.LngLat(lng, lat), name);
+        hideSearchPage();
+      });
+    });
+  }
+
+  // ===== 设置路线终点，打开路线规划页 =====
+  function setRouteDestination(pos, name) {
+    routeEnd = { pos: pos, name: name };
+    routeStartText.textContent = '我的位置';
+    routeEndText.textContent = name;
+    showRoutePage();
+    doRoutePlan();
   }
 
   // ===== 加载地图 =====
   function loadMap() {
-    if (window.AMap) {
-      initMap();
-      return;
-    }
-    if (!key) {
-      keyModal.classList.remove('hidden');
-      return;
-    }
+    if (window.AMap) { initMap(); return; }
+    if (!key) { keyModal.classList.remove('hidden'); return; }
     if (securityCode) {
       window._AMapSecurityConfig = { securityJsCode: securityCode };
     }
     var s = document.createElement('script');
-    s.src = 'https://webapi.amap.com/maps?v=2.0&key=' + key + '&plugin=AMap.Geolocation,AMap.PlaceSearch,AMap.AutoComplete,AMap.Geocoder,AMap.Driving';
+    s.src = 'https://webapi.amap.com/maps?v=2.0&key=' + key + '&plugin=AMap.Geolocation,AMap.PlaceSearch,AMap.AutoComplete,AMap.Geocoder,AMap.Driving,AMap.Transfer,AMap.Walking,AMap.Riding';
     s.onload = function () {
       if (window.AMap && window.AMap.Map) {
         initMap();
@@ -114,16 +256,19 @@
       center: [116.397428, 39.90923],
       resizeEnable: true,
     });
+
     // 默认开启实时路况图层
     trafficLayer = new AMap.TileLayer.Traffic({
       zIndex: 10,
       autoRefresh: true,
-      interval: 180,  // 3分钟自动刷新路况数据
+      interval: 180,
     });
     trafficLayer.setMap(map);
     trafficVisible = true;
 
     doLocate();
+
+    // 点击地图：逆地理编码 + 信息窗口
     map.on('click', function (e) {
       reverseGeocode(e.lnglat);
     });
@@ -180,51 +325,20 @@
     infoWindow.open(map, lnglat);
   }
 
-  // 导航到这里
+  // 导航到这里 → 打开路线规划
   window._navFrom = function (btn) {
     var lng = parseFloat(btn.getAttribute('data-lng'));
     var lat = parseFloat(btn.getAttribute('data-lat'));
     var name = btn.getAttribute('data-name');
-    var endLngLat = new AMap.LngLat(lng, lat);
-    planRoutes(endLngLat, name);
+    setRouteDestination(new AMap.LngLat(lng, lat), name);
   };
 
-  // ===== 历史记录面板 =====
-  function showHistoryPanel() {
-    var list = getSearchHistory();
-    if (list.length === 0) {
-      searchResults.innerHTML = '<div class="history-empty">暂无搜索记录</div>';
-    } else {
-      var html = '<div class="history-header"><span>搜索历史</span><button class="history-clear" id="clear-history-btn">清空</button></div>';
-      list.forEach(function (kw) {
-        html += '<div class="history-item" data-keyword="' + escapeHtml(kw) + '">' +
-          '<span class="history-icon">🕐</span>' +
-          '<span class="history-text">' + escapeHtml(kw) + '</span>' +
-          '</div>';
-      });
-      searchResults.innerHTML = html;
-      // 绑定清空按钮
-      var clearBtn = document.getElementById('clear-history-btn');
-      if (clearBtn) {
-        clearBtn.addEventListener('click', function (e) {
-          e.stopPropagation();
-          clearSearchHistory();
-        });
-      }
-      // 绑定点击历史
-      searchResults.querySelectorAll('.history-item').forEach(function (item) {
-        item.addEventListener('click', function () {
-          var kw = item.getAttribute('data-keyword');
-          searchInput.value = kw;
-          doSearch(kw);
-        });
-      });
-    }
-    panelTitle.textContent = '搜索';
-    searchPanel.classList.remove('hidden');
+  function clearSearchMarkers() {
+    searchMarkers.forEach(function (m) { m.setMap(null); });
+    searchMarkers = [];
   }
 
-  // ===== 输入实时提示（AutoComplete） =====
+  // ===== 自动补全（输入时实时提示） =====
   function showAutocomplete(keyword) {
     if (!map) return;
     var autoComplete = new AMap.AutoComplete({
@@ -235,59 +349,23 @@
       if (status === 'complete' && result.tips && result.tips.length > 0) {
         var tips = result.tips.filter(function (t) { return t.location && t.location.lng; });
         if (tips.length === 0) {
-          searchResults.innerHTML = '<div class="history-empty">无匹配结果</div>';
-          panelTitle.textContent = '搜索';
-          searchPanel.classList.remove('hidden');
+          searchBody.innerHTML = '<div class="history-empty">无匹配结果</div>';
           return;
         }
-
-        var html = '';
-        tips.slice(0, 8).forEach(function (tip) {
-          var addr = (tip.district || '') + (tip.address || '');
-          html += '<div class="result-item autocomplete-item" data-lng="' + tip.location.lng + '" data-lat="' + tip.location.lat + '" data-name="' + escapeHtml(tip.name) + '" data-addr="' + escapeHtml(addr) + '">' +
-            '<div class="result-info">' +
-            '<div class="result-name">' + escapeHtml(tip.name) + '</div>' +
-            '<div class="result-addr">' + escapeHtml(addr || '') + '</div>' +
-            '</div>' +
-            '</div>';
-        });
-        searchResults.innerHTML = html;
-        panelTitle.textContent = '搜索提示';
-        searchPanel.classList.remove('hidden');
-
-        // 绑定点击：提示词直接导航，不需要再走搜索结果
-        searchResults.querySelectorAll('.autocomplete-item').forEach(function (item) {
-          item.addEventListener('click', function () {
-            var lng = parseFloat(item.getAttribute('data-lng'));
-            var lat = parseFloat(item.getAttribute('data-lat'));
-            var name = item.getAttribute('data-name');
-            searchInput.value = name;
-            addSearchHistory(name);
-            searchPanel.classList.add('hidden');
-            clearSearchMarkers();
-            // 直接规划路线
-            var endLngLat = new AMap.LngLat(lng, lat);
-            planRoutes(endLngLat, name);
-          });
-        });
+        renderSuggestions(tips.slice(0, 10));
       } else {
-        searchResults.innerHTML = '<div class="history-empty">无匹配结果</div>';
-        panelTitle.textContent = '搜索';
-        searchPanel.classList.remove('hidden');
+        searchBody.innerHTML = '<div class="history-empty">无匹配结果</div>';
       }
     });
   }
 
-  // ===== 搜索 =====
+  // ===== 搜索（PlaceSearch） =====
   function doSearch(keyword) {
     if (!keyword || !keyword.trim()) return;
     if (!map) {
-      searchResults.innerHTML = '<div class="result-item"><div class="result-info"><div class="result-name">地图未加载，请先配置Key</div></div></div>';
-      searchPanel.classList.remove('hidden');
+      searchBody.innerHTML = '<div class="history-empty">地图未加载，请先配置Key</div>';
       return;
     }
-
-    // 记录搜索历史
     addSearchHistory(keyword.trim());
 
     var searchCity = currentCity || '全国';
@@ -299,16 +377,13 @@
     });
 
     placeSearch.search(keyword, function (status, result) {
-      clearSearchMarkers();
-
       if (status === 'complete' && result.poiList && result.poiList.pois && result.poiList.pois.length > 0) {
         var pois = result.poiList.pois;
 
-        // 按城市优先排序
+        // 城市优先排序
         var myCity = currentCity || '';
         var myCityName = myCity.replace(/市$/, '');
         var myProvince = myCityName;
-
         var cityToProvince = {
           '广州': '广东', '深圳': '广东', '东莞': '广东', '佛山': '广东',
           '珠海': '广东', '惠州': '广东', '中山': '广东', '汕头': '广东',
@@ -323,9 +398,7 @@
           '兰州': '甘肃', '呼和浩特': '内蒙古', '乌鲁木齐': '新疆',
           '拉萨': '西藏', '银川': '宁夏', '西宁': '青海', '海口': '海南',
         };
-        if (cityToProvince[myCityName]) {
-          myProvince = cityToProvince[myCityName];
-        }
+        if (cityToProvince[myCityName]) myProvince = cityToProvince[myCityName];
 
         pois.sort(function (a, b) {
           var aScore = 0, bScore = 0;
@@ -344,21 +417,10 @@
           return bScore - aScore;
         });
 
-        var html = '';
-        pois.slice(0, 10).forEach(function (poi, i) {
-          var addr = (poi.pname || '') + (poi.cityname || '') + (poi.adname || '') + (poi.address || '');
-          html += '<div class="result-item" data-lng="' + poi.location.lng + '" data-lat="' + poi.location.lat + '" data-name="' + escapeHtml(poi.name) + '" data-addr="' + escapeHtml(addr) + '">' +
-            '<div class="result-index">' + (i + 1) + '</div>' +
-            '<div class="result-info">' +
-            '<div class="result-name">' + escapeHtml(poi.name) + '</div>' +
-            '<div class="result-addr">' + escapeHtml(addr || '暂无地址信息') + '</div>' +
-            '</div>' +
-            '<button class="btn-nav" data-lng="' + poi.location.lng + '" data-lat="' + poi.location.lat + '" data-name="' + escapeHtml(poi.name) + '">导航</button>' +
-            '</div>';
-        });
-        searchResults.innerHTML = html;
+        renderSearchResults(pois.slice(0, 10));
 
         // 添加地图标记
+        clearSearchMarkers();
         pois.slice(0, 10).forEach(function (poi, i) {
           var marker = new AMap.Marker({
             position: [poi.location.lng, poi.location.lat],
@@ -374,91 +436,299 @@
         if (searchMarkers.length > 0) {
           map.setFitView(searchMarkers, false, [60, 60, 60, 120]);
         }
-
-        // 绑定点击事件：点击搜索结果直接导航
-        searchResults.querySelectorAll('.result-item').forEach(function (item) {
-          item.addEventListener('click', function (e) {
-            if (e.target.classList.contains('btn-nav')) return;
-            var lng = parseFloat(item.getAttribute('data-lng'));
-            var lat = parseFloat(item.getAttribute('data-lat'));
-            var name = item.getAttribute('data-name');
-            searchPanel.classList.add('hidden');
-              clearSearchMarkers();
-              planRoutes(new AMap.LngLat(lng, lat), name);
-          });
-        });
-
-        // 导航按钮（保留，功能同点击）
-        searchResults.querySelectorAll('.btn-nav').forEach(function (btn) {
-          btn.addEventListener('click', function () {
-            var lng = parseFloat(btn.getAttribute('data-lng'));
-            var lat = parseFloat(btn.getAttribute('data-lat'));
-            var name = btn.getAttribute('data-name');
-            searchPanel.classList.add('hidden');
-              clearSearchMarkers();
-            planRoutes(new AMap.LngLat(lng, lat), name);
-          });
-        });
-
       } else {
-        searchResults.innerHTML = '<div class="result-item"><div class="result-info"><div class="result-name">未找到相关地点</div></div></div>';
+        searchBody.innerHTML = '<div class="history-empty">未找到相关地点</div>';
       }
-      panelTitle.textContent = '搜索结果';
-      searchPanel.classList.remove('hidden');
     });
   }
 
-  function clearSearchMarkers() {
-    searchMarkers.forEach(function (m) { m.setMap(null); });
-    searchMarkers = [];
-  }
-
-  // ===== 路线规划（策略10综合推荐） =====
-  function planRoutes(endPos, endName) {
+  // ===== 路线规划 =====
+  function doRoutePlan() {
     if (!map) return;
+    if (!routeEnd) return;
 
     var startPos = currentLocation;
     if (!startPos) {
       doLocate();
-      setTimeout(function () { planRoutes(endPos, endName); }, 2000);
+      routeLoading.style.display = 'block';
+      routeCardsEl.innerHTML = '';
+      setTimeout(function () { doRoutePlan(); }, 2000);
       return;
     }
 
+    routeStart = { pos: startPos, name: '我的位置' };
     clearRouteDisplay();
+    routeLoading.style.display = 'block';
+    routeCardsEl.innerHTML = '';
 
-    var driving = new AMap.Driving({
-      policy: 10,
-      hideMarkers: true,
-    });
+    var endPos = routeEnd.pos;
 
+    switch (currentMode) {
+      case 'driving':
+        planDriving(startPos, endPos);
+        break;
+      case 'transit':
+        planTransit(startPos, endPos);
+        break;
+      case 'walking':
+        planWalking(startPos, endPos);
+        break;
+      case 'riding':
+        planRiding(startPos, endPos);
+        break;
+    }
+  }
+
+  // --- 驾车 ---
+  function planDriving(startPos, endPos) {
+    var driving = new AMap.Driving({ policy: 10, hideMarkers: true });
     driving.search(startPos, endPos, function (status, result) {
+      routeLoading.style.display = 'none';
       if (status === 'complete' && result.routes && result.routes.length > 0) {
         var routes = result.routes;
         var policyTags = ['推荐', '备选一', '备选二'];
-
         routes.forEach(function (route, idx) {
           var tag = idx < policyTags.length ? policyTags[idx] : '备选' + (idx + 1);
-          allRouteData.push({ index: idx, route: route, policy: { tag: tag } });
+          allRouteData.push({ index: idx, route: route, policy: { tag: tag }, mode: 'driving' });
         });
-
         allRouteData.sort(function (a, b) { return a.route.time - b.route.time; });
         selectedRouteIndex = 0;
         drawRoutes();
-        updateRouteCards();
+        renderRouteCards();
+        addEndpointMarkers(startPos, endPos);
       } else {
-        var fallbackDriving = new AMap.Driving({ policy: 0, hideMarkers: true });
-        fallbackDriving.search(startPos, endPos, function (fbStatus, fbResult) {
-          if (fbStatus === 'complete' && fbResult.routes && fbResult.routes.length > 0) {
-            allRouteData.push({ index: 0, route: fbResult.routes[0], policy: { tag: '推荐' } });
+        // 降级策略 0
+        var fb = new AMap.Driving({ policy: 0, hideMarkers: true });
+        fb.search(startPos, endPos, function (s2, r2) {
+          if (s2 === 'complete' && r2.routes && r2.routes.length > 0) {
+            allRouteData.push({ index: 0, route: r2.routes[0], policy: { tag: '推荐' }, mode: 'driving' });
             selectedRouteIndex = 0;
             drawRoutes();
-            updateRouteCards();
+            renderRouteCards();
+            addEndpointMarkers(startPos, endPos);
+          } else {
+            routeCardsEl.innerHTML = '<div class="route-loading">未找到驾车路线</div>';
           }
         });
       }
     });
+  }
 
-    // 起终点标记
+  // --- 公交 ---
+  function planTransit(startPos, endPos) {
+    var transfer = new AMap.Transfer({
+      city: currentCity || '北京',
+      policy: AMap.TransferPolicy.LEAST_TIME,
+      hideMarkers: true,
+    });
+    transfer.search(startPos, endPos, function (status, result) {
+      routeLoading.style.display = 'none';
+      if (status === 'complete' && result.plans && result.plans.length > 0) {
+        result.plans.forEach(function (plan, idx) {
+          var tag = idx === 0 ? '推荐' : '备选' + idx;
+          allRouteData.push({ index: idx, route: plan, policy: { tag: tag }, mode: 'transit' });
+        });
+        selectedRouteIndex = 0;
+        drawTransitRoutes();
+        renderRouteCards();
+        addEndpointMarkers(startPos, endPos);
+      } else {
+        routeCardsEl.innerHTML = '<div class="route-loading">未找到公交路线</div>';
+      }
+    });
+  }
+
+  // --- 步行 ---
+  function planWalking(startPos, endPos) {
+    var walking = new AMap.Walking({ hideMarkers: true });
+    walking.search(startPos, endPos, function (status, result) {
+      routeLoading.style.display = 'none';
+      if (status === 'complete' && result.routes && result.routes.length > 0) {
+        result.routes.forEach(function (route, idx) {
+          var tag = idx === 0 ? '推荐' : '备选' + idx;
+          allRouteData.push({ index: idx, route: route, policy: { tag: tag }, mode: 'walking' });
+        });
+        selectedRouteIndex = 0;
+        drawRoutes();
+        renderRouteCards();
+        addEndpointMarkers(startPos, endPos);
+      } else {
+        routeCardsEl.innerHTML = '<div class="route-loading">未找到步行路线</div>';
+      }
+    });
+  }
+
+  // --- 骑行 ---
+  function planRiding(startPos, endPos) {
+    var riding = new AMap.Riding({ hideMarkers: true });
+    riding.search(startPos, endPos, function (status, result) {
+      routeLoading.style.display = 'none';
+      if (status === 'complete' && result.routes && result.routes.length > 0) {
+        result.routes.forEach(function (route, idx) {
+          var tag = idx === 0 ? '推荐' : '备选' + idx;
+          allRouteData.push({ index: idx, route: route, policy: { tag: tag }, mode: 'riding' });
+        });
+        selectedRouteIndex = 0;
+        drawRoutes();
+        renderRouteCards();
+        addEndpointMarkers(startPos, endPos);
+      } else {
+        routeCardsEl.innerHTML = '<div class="route-loading">未找到骑行路线</div>';
+      }
+    });
+  }
+
+  // ===== 绘制驾车/步行/骑行路线 =====
+  function drawRoutes() {
+    routePolylines.forEach(function (l) { l.setMap(null); });
+    // 保留起终点标记
+    var startEnd = routeLabels.slice(0, 2);
+    routeLabels.slice(2).forEach(function (m) { if (m.setMap) m.setMap(null); });
+    routeLabels = startEnd;
+    routePolylines = [];
+
+    allRouteData.forEach(function (r, idx) {
+      var route = r.route;
+      var isSelected = (idx === selectedRouteIndex);
+      var path = [];
+
+      // 驾车/步行/骑行都是 steps.path 结构
+      if (route.steps) {
+        route.steps.forEach(function (step) {
+          if (step.path) {
+            step.path.forEach(function (p) { path.push([p.lng, p.lat]); });
+          }
+        });
+      }
+
+      if (path.length === 0) return;
+
+      var polyline = new AMap.Polyline({
+        path: path,
+        strokeColor: isSelected ? '#3388FF' : '#B0C4DE',
+        strokeWeight: isSelected ? 10 : 5,
+        strokeOpacity: isSelected ? 1 : 0.6,
+        strokeStyle: 'solid',
+        lineJoin: 'round',
+        lineCap: 'round',
+        showDir: isSelected,
+        zIndex: isSelected ? 100 : 50,
+      });
+      map.add(polyline);
+      routePolylines.push(polyline);
+
+      // 路线中间时间标签
+      var midIdx = Math.floor(path.length / 2);
+      var timeStr = formatTime(route.time);
+      var labelBg = isSelected ? '#3388FF' : '#B0C4DE';
+      var label = new AMap.Marker({
+        position: path[midIdx],
+        content: '<div style="background:' + labelBg + ';color:white;padding:3px 8px;border-radius:4px;font-size:12px;font-weight:500;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,0.3);">' + timeStr + '</div>',
+        offset: new AMap.Pixel(-30, -10),
+        zIndex: isSelected ? 150 : 80,
+      });
+      map.add(label);
+      routeLabels.push(label);
+
+      // 点击路线切换选中
+      polyline.on('click', function () {
+        selectedRouteIndex = idx;
+        drawRoutes();
+        renderRouteCards();
+      });
+    });
+
+    if (routePolylines.length > 0) {
+      map.setFitView(routePolylines, false, [80, 80, 80, 80]);
+    }
+  }
+
+  // ===== 绘制公交路线 =====
+  function drawTransitRoutes() {
+    routePolylines.forEach(function (l) { l.setMap(null); });
+    var startEnd = routeLabels.slice(0, 2);
+    routeLabels.slice(2).forEach(function (m) { if (m.setMap) m.setMap(null); });
+    routeLabels = startEnd;
+    routePolylines = [];
+
+    allRouteData.forEach(function (r, idx) {
+      var plan = r.route;  // TransferPlan
+      var isSelected = (idx === selectedRouteIndex);
+
+      if (!plan.segments) return;
+
+      plan.segments.forEach(function (seg) {
+        var path = [];
+        // 公交/地铁段
+        if (seg.transit_mode === 'BUS' || seg.transit_mode === 'RAIL' || seg.transit_mode) {
+          if (seg.transit.lines && seg.transit.lines.length > 0) {
+            var line = seg.transit.lines[0];
+            if (line.path) {
+              line.path.forEach(function (p) { path.push([p.lng, p.lat]); });
+            }
+          }
+        }
+        // 步行段
+        if (seg.walking && seg.walking.steps) {
+          seg.walking.steps.forEach(function (step) {
+            if (step.path) {
+              step.path.forEach(function (p) { path.push([p.lng, p.lat]); });
+            }
+          });
+        }
+
+        if (path.length === 0) return;
+
+        var polyline = new AMap.Polyline({
+          path: path,
+          strokeColor: isSelected ? '#3388FF' : '#B0C4DE',
+          strokeWeight: isSelected ? 8 : 4,
+          strokeOpacity: isSelected ? 1 : 0.6,
+          strokeStyle: 'solid',
+          lineJoin: 'round',
+          lineCap: 'round',
+          zIndex: isSelected ? 100 : 50,
+        });
+        map.add(polyline);
+        routePolylines.push(polyline);
+      });
+
+      // 中点标签
+      if (routePolylines.length > 0) {
+        var lastLine = routePolylines[routePolylines.length - 1];
+        var midPath = lastLine.getPath();
+        if (midPath && midPath.length > 0) {
+          var midIdx = Math.floor(midPath.length / 2);
+          var timeStr = formatTime(plan.time);
+          var labelBg = isSelected ? '#3388FF' : '#B0C4DE';
+          var label = new AMap.Marker({
+            position: midPath[midIdx],
+            content: '<div style="background:' + labelBg + ';color:white;padding:3px 8px;border-radius:4px;font-size:12px;font-weight:500;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,0.3);">' + timeStr + '</div>',
+            offset: new AMap.Pixel(-30, -10),
+            zIndex: isSelected ? 150 : 80,
+          });
+          map.add(label);
+          routeLabels.push(label);
+        }
+      }
+
+      // 点击路线
+      routePolylines.forEach(function (pl) {
+        pl.on('click', function () {
+          selectedRouteIndex = idx;
+          drawTransitRoutes();
+          renderRouteCards();
+        });
+      });
+    });
+
+    if (routePolylines.length > 0) {
+      map.setFitView(routePolylines, false, [80, 80, 80, 80]);
+    }
+  }
+
+  // ===== 起终点标记 =====
+  function addEndpointMarkers(startPos, endPos) {
     var startMarker = new AMap.Marker({
       position: startPos,
       icon: new AMap.Icon({ size: new AMap.Size(24, 34), image: '//webapi.amap.com/theme/v1.3/markers/n/start.png', imageSize: new AMap.Size(24, 34) }),
@@ -470,109 +740,99 @@
       offset: new AMap.Pixel(-12, -34),
     });
     map.add([startMarker, endMarker]);
-    routeLabels.push(startMarker, endMarker);
+    routeLabels = [startMarker, endMarker];
   }
 
-  function drawRoutes() {
-    routePolylines.forEach(function (l) { l.setMap(null); });
-    routeLabels.forEach(function (m) {
-      if (m.setMap) m.setMap(null);
-    });
-    routePolylines = [];
-    // 保留起终点标记
-    var startEndMarkers = routeLabels.slice(0, 2);
-    routeLabels = startEndMarkers;
-
-    allRouteData.forEach(function (r, idx) {
-      var route = r.route;
-      var isSelected = (idx === selectedRouteIndex);
-
-      // 构建路径
-      var path = [];
-      route.steps.forEach(function (step) {
-        step.path.forEach(function (p) { path.push([p.lng, p.lat]); });
-      });
-
-      // 高德风格配色：全绿色，选中深绿粗线，未选中浅绿细线，全部实线可见
-      var polyline = new AMap.Polyline({
-        path: path,
-        strokeColor: isSelected ? '#1AAD19' : '#5EC776',
-        strokeWeight: isSelected ? 10 : 5,
-        strokeOpacity: isSelected ? 1 : 0.7,
-        strokeStyle: 'solid',
-        lineJoin: 'round',
-        lineCap: 'round',
-        showDir: isSelected,
-        zIndex: isSelected ? 100 : 50,
-      });
-      map.add(polyline);
-      routePolylines.push(polyline);
-
-      // 路线上的时间标签
-      if (path.length > 0) {
-        var midIndex = Math.floor(path.length / 2);
-        var midPoint = path[midIndex];
-        var time = Math.ceil(route.time / 60);
-        var hours = Math.floor(time / 60);
-        var mins = time % 60;
-        var timeStr = hours > 0 ? hours + 'h' + mins + 'm' : mins + '分钟';
-
-        // 标签颜色跟随路线颜色
-        var labelBg = isSelected ? '#1AAD19' : '#5EC776';
-        var label = new AMap.Marker({
-          position: midPoint,
-          content: '<div style="background:' + labelBg + ';color:white;padding:3px 8px;border-radius:4px;font-size:12px;font-weight:500;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,0.3);">' + timeStr + '</div>',
-          offset: new AMap.Pixel(-30, -10),
-          zIndex: isSelected ? 150 : 80,
-        });
-        map.add(label);
-        routeLabels.push(label);
-      }
-
-      // 点击路线切换
-      polyline.on('click', function () {
-        selectedRouteIndex = idx;
-        drawRoutes();
-        updateRouteCards();
-      });
-    });
-
-    if (routePolylines.length > 0) {
-      map.setFitView(routePolylines, false, [100, 100, 100, 100]);
-    }
-  }
-
-  function updateRouteCards() {
+  // ===== 路线卡片渲染 =====
+  function renderRouteCards() {
     var html = '';
     allRouteData.forEach(function (r, idx) {
       var route = r.route;
-      var time = Math.ceil(route.time / 60);
-      var distance = (route.distance / 1000).toFixed(1);
-      var lights = route.steps ? route.steps.filter(function (s) { return s.assistant_action && s.assistant_action.indexOf('红绿灯') >= 0; }).length : 0;
-      var hours = Math.floor(time / 60);
-      var mins = time % 60;
-      var timeStr = hours > 0 ? hours + 'h' + mins + 'm' : mins + '分钟';
+      var isSelected = (idx === selectedRouteIndex);
+      var timeStr, distStr, lights = 0, tag = r.policy.tag;
 
-      html += '<div class="route-card' + (idx === selectedRouteIndex ? ' active' : '') + '" data-index="' + idx + '">' +
-        '<div class="route-card-time">' + timeStr + '</div>' +
-        '<div class="route-card-info">' + distance + '公里 · 🚦' + lights + '</div>' +
-        '<div class="route-card-tag">' + r.policy.tag + '</div>' +
+      if (r.mode === 'transit') {
+        // 公交方案
+        timeStr = formatTime(route.time);
+        distStr = formatDistance(route.distance || 0);
+        // 公交通常没有红绿灯数据
+      } else {
+        // 驾车/步行/骑行
+        timeStr = formatTime(route.time);
+        distStr = formatDistance(route.distance);
+        if (route.steps) {
+          lights = route.steps.filter(function (s) { return s.assistant_action && s.assistant_action.indexOf('红绿灯') >= 0; }).length;
+        }
+      }
+
+      // 路况标签（简单估算）
+      var trafficTag = '';
+      if (r.mode === 'driving') {
+        var avgSpeed = route.distance / (route.time || 1) * 3.6; // km/h
+        if (avgSpeed > 40) {
+          trafficTag = '<span class="route-card-traffic-tag traffic-smooth">畅通</span>';
+        } else if (avgSpeed > 20) {
+          trafficTag = '<span class="route-card-traffic-tag traffic-slow">缓行</span>';
+        } else {
+          trafficTag = '<span class="route-card-traffic-tag traffic-jam">拥堵</span>';
+        }
+      }
+
+      var infoParts = [distStr];
+      if (lights > 0) infoParts.push('🚦' + lights);
+      if (r.mode === 'transit' && route.segments) {
+        var busCount = route.segments.filter(function (s) { return s.transit_mode; }).length;
+        if (busCount > 0) infoParts.push(busCount + '段乘车');
+      }
+
+      html += '<div class="route-card-item' + (isSelected ? ' active' : '') + '" data-index="' + idx + '">' +
+        '<div class="route-card-row1">' +
+        '<span class="route-card-time">' + timeStr + '</span>' +
+        '<span class="route-card-distance">' + distStr + '</span>' +
+        trafficTag +
+        '</div>' +
+        '<div class="route-card-row2">' +
+        '<span>' + infoParts.join(' · ') + '</span>' +
+        '<span class="route-card-tag">' + tag + '</span>' +
+        '</div>' +
         '</div>';
     });
-    routeCards.innerHTML = html;
 
-    routeCards.querySelectorAll('.route-card').forEach(function (card) {
+    // 开始导航按钮
+    html += '<button class="nav-start-btn" id="nav-start-btn">开始导航</button>';
+
+    routeCardsEl.innerHTML = html;
+    routeLoading.style.display = 'none';
+
+    // 点击卡片切换路线
+    routeCardsEl.querySelectorAll('.route-card-item').forEach(function (card) {
       card.addEventListener('click', function () {
         var idx = parseInt(card.getAttribute('data-index'));
         if (allRouteData[idx]) {
           selectedRouteIndex = idx;
-          drawRoutes();
-          updateRouteCards();
+          // 重绘路线
+          if (currentMode === 'transit') {
+            drawTransitRoutes();
+          } else {
+            drawRoutes();
+          }
+          renderRouteCards();
         }
       });
     });
 
-    routeCards.classList.remove('hidden');
+    // 开始导航按钮 → 打开高德地图 APP
+    var navBtn = document.getElementById('nav-start-btn');
+    if (navBtn) {
+      navBtn.addEventListener('click', function () {
+        if (!routeStart || !routeEnd) return;
+        var slng = routeStart.pos.lng, slat = routeStart.pos.lat;
+        var elng = routeEnd.pos.lng, elat = routeEnd.pos.lat;
+        var ename = encodeURIComponent(routeEnd.name);
+        // 打开高德地图网页版导航
+        window.open('https://uri.amap.com/navigation?from=' + slng + ',' + slat + ',我的位置&to=' + elng + ',' + elat + ',' + ename + '&mode=car&policy=1', '_blank');
+      });
+    }
   }
 
   function clearRouteDisplay() {
@@ -581,54 +841,108 @@
     routePolylines = [];
     routeLabels = [];
     allRouteData = [];
-    routeCards.classList.add('hidden');
+    routeCardsEl.innerHTML = '';
+    routeLoading.style.display = 'none';
   }
 
   // ===== 事件绑定 =====
-  searchBtn.addEventListener('click', function () {
-    doSearch(searchInput.value);
+
+  // 首页搜索栏 → 打开搜索页
+  homeSearch.addEventListener('click', function () {
+    showSearchPage();
   });
 
-  searchInput.addEventListener('keydown', function (e) {
-    if (e.key === 'Enter') doSearch(searchInput.value);
+  // 搜索页返回
+  searchBack.addEventListener('click', function () {
+    hideSearchPage();
   });
 
-  // 搜索框聚焦：空内容显示历史，有内容显示提示
+  // 搜索输入框
   searchInput.addEventListener('focus', function () {
     searchInput.select();
     if (!searchInput.value.trim()) {
-      showHistoryPanel();
+      renderHistory();
     }
   });
 
-  // 输入时实时提示（300ms 防抖）
   searchInput.addEventListener('input', function () {
     var val = searchInput.value.trim();
 
-    // 清掉之前的定时器
+    // 显示/隐藏清空按钮
+    if (val) {
+      searchClearInput.classList.remove('hidden');
+    } else {
+      searchClearInput.classList.add('hidden');
+    }
+
+    // 防抖
     if (autocompleteTimer) {
       clearTimeout(autocompleteTimer);
       autocompleteTimer = null;
     }
 
     if (!val) {
-      // 输入框清空，显示历史
-      showHistoryPanel();
+      renderHistory();
       return;
     }
 
     if (!map) return;
 
-    // 300ms 防抖
     autocompleteTimer = setTimeout(function () {
       showAutocomplete(val);
     }, 300);
   });
 
-  closeSearch.addEventListener('click', function () {
-    searchPanel.classList.add('hidden');
+  searchInput.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') {
+      var val = searchInput.value.trim();
+      if (val) doSearch(val);
+    }
   });
 
+  // 清空输入
+  searchClearInput.addEventListener('click', function () {
+    searchInput.value = '';
+    searchClearInput.classList.add('hidden');
+    renderHistory();
+    searchInput.focus();
+  });
+
+  // 路线页返回
+  routeBack.addEventListener('click', function () {
+    hideRoutePage();
+  });
+
+  // 起终点互换
+  swapBtn.addEventListener('click', function () {
+    if (!routeEnd) return;
+    // 互换终点和当前位置
+    var tempEnd = routeEnd;
+    if (currentLocation) {
+      routeEnd = { pos: currentLocation, name: '我的位置' };
+      routeStart = { pos: tempEnd.pos, name: tempEnd.name };
+      currentLocation = tempEnd.pos;
+    }
+    routeStartText.textContent = tempEnd.name;
+    routeEndText.textContent = '我的位置';
+    // 重新规划
+    routeEnd = { pos: routeEnd.pos, name: routeEnd.name };
+    doRoutePlan();
+  });
+
+  // 出行方式切换
+  routeModeLabels.forEach(function (label) {
+    label.addEventListener('click', function () {
+      routeModeLabels.forEach(function (l) { l.classList.remove('active'); });
+      label.classList.add('active');
+      currentMode = label.getAttribute('data-mode');
+      if (routeEnd) {
+        doRoutePlan();
+      }
+    });
+  });
+
+  // 定位按钮
   locateBtn.addEventListener('click', function () {
     doLocate();
   });
